@@ -1,4 +1,5 @@
 import { browser } from '@wdio/globals';
+import { Key } from 'webdriverio';
 import { spawnSync } from 'node:child_process';
 
 const DEFAULT_TIMEOUT = 5_000;
@@ -28,4 +29,14 @@ export async function setElementValue(targetElement: WebdriverIO.Element, value:
 		targetElement,
 		value
 	);
+}
+
+export async function dragAndDrop(from: WebdriverIO.Element, to: WebdriverIO.Element) {
+	console.log('starting drag & drop');
+	try {
+		console.log(JSON.stringify(browser.action('key').down('f').up('f').toJSON()));
+		await browser.action('key').down('f').up('f').perform();
+	} catch (err: unknown) {
+		console.log(err);
+	}
 }

@@ -19,37 +19,28 @@
 </script>
 
 <div class="dragzone-wrapper">
-	{@render moveCommitDropzone()}
-</div>
-
-<!-- We require the dropzones to be nested -->
-{#snippet moveCommitDropzone()}
 	<Dropzone
 		accepts={actions.acceptMoveCommit.bind(actions)}
 		ondrop={actions.onMoveCommit.bind(actions)}
 		fillHeight
 	>
-		{@render branchDropDropzone()}
+		<Dropzone
+			accepts={actions.acceptBranchDrop.bind(actions)}
+			ondrop={actions.onBranchDrop.bind(actions)}
+			fillHeight
+		>
+			{@render children()}
+
+			{#snippet overlay({ hovered, activated })}
+				<CardOverlay {hovered} {activated} label="Move here" />
+			{/snippet}
+		</Dropzone>
 
 		{#snippet overlay({ hovered, activated })}
 			<CardOverlay {hovered} {activated} label="Move here" />
 		{/snippet}
 	</Dropzone>
-{/snippet}
-
-{#snippet branchDropDropzone()}
-	<Dropzone
-		accepts={actions.acceptBranchDrop.bind(actions)}
-		ondrop={actions.onBranchDrop.bind(actions)}
-		fillHeight
-	>
-		{@render children()}
-
-		{#snippet overlay({ hovered, activated })}
-			<CardOverlay {hovered} {activated} label="Move here" />
-		{/snippet}
-	</Dropzone>
-{/snippet}
+</div>
 
 <style>
 	.dragzone-wrapper {

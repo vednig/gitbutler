@@ -2,11 +2,17 @@
 
 set -eu -o pipefail
 
-TEMP_DIR="/tmp/gb-e2e-repos"
-
-CLI=${1:?The first argument is the GitButler CLI}
+TEMP_DIR=${1:?The first argument is a temp dir}
 # Convert to absolute path
-CLI=$(realpath "$CLI")
+TEMP_DIR=$(realpath "$TEMP_DIR")
+
+
+CLI=$(realpath "../../target/debug/gitbutler-cli")
+
+DATA_DIR="$HOME/.local/share/com.gitbutler.app.dev"
+if [ -d "$DATA_DIR" ]; then
+  rm -rf $DATA_DIR
+fi
 
 function setGitDefaults() {
   git config user.email "test@example.com"
@@ -26,27 +32,17 @@ function tick() {
 }
 tick
 
-if [ ! -d "$TEMP_DIR" ]; then
-  mkdir "$TEMP_DIR"
+if [ -d "$TEMP_DIR" ]; then
+  rm -rf "$TEMP_DIR"
 fi
-cd "$TEMP_DIR"
-
-git init remote
+mkdir "$TEMP_DIR"
 
 (
+  cd "$TEMP_DIR"
+  git init remote
   cd remote
-
   setGitDefaults
-
   echo first >file
   git add . && git commit -m "init"
 )
 
-
-# This code will be useful for scenarios that assumes a project
-# already exists.
-# (
-#   cd one-vbranch-on-integration
-#   $CLI project add --switch-to-integration "$(git rev-parse --symbolic-full-name "@{u}")"
-#   $CLI branch create virtual
-# )

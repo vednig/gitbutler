@@ -133,6 +133,11 @@
 			}
 		});
 	}}
+	data-locked={file.locked}
+	role="option"
+	aria-selected={selected}
+	tabindex="-1"
+	data-testid={'file-' + file.path}
 	ondragstart={async () => {
 		// Reset selection if the file being dragged is not in the selected list
 		if ($fileIdSelection.length > 0 && !fileIdSelection.has(file.id, $commit?.id)) {

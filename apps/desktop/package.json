@@ -82,7 +82,8 @@
 		"ts-node": "^10.9.2",
 		"vite": "catalog:",
 		"vitest": "^2.0.5",
-		"@types/node": "^22.3.0"
+		"@types/node": "^22.3.0",
+		"webdriverio": "^9.0.7"
 	},
 	"dependencies": {
 		"openai": "^4.47.3"

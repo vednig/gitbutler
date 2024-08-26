@@ -123,7 +123,7 @@
 				>
 					<BranchHeader {isLaneCollapsed} onGenerateBranchName={generateBranchName} />
 					<PullRequestCard />
-					<div class="card">
+					<div class="card" data-testid="branch-files">
 						{#if branch.files?.length > 0}
 							<div class="branch-card__files">
 								<Dropzones>
