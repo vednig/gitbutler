@@ -56,7 +56,6 @@ pub fn get_applied_status_cached(
         // TODO(ST): Ideally, we can avoid calling `get_workspace_head()` as everyone who modifies
         //           any of its inputs will update the intragration commit right away.
         //           It's for another day though - right now the integration commit may be slightly stale.
-        let workspace_head = get_workspace_head(ctx)?;
         gitbutler_diff::workdir(ctx.repository(), workspace_head.to_owned())
             .context("failed to diff workdir")
     })?;

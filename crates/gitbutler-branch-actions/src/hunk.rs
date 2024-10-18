@@ -6,8 +6,8 @@ use std::{
 };
 
 use gitbutler_diff::{GitHunk, Hunk, HunkHash};
+use gitbutler_hunk_dependency::dependencies::HunkLock;
 use gitbutler_serde::BStringForFrontend;
-use gitbutler_stack::StackId;
 use itertools::Itertools;
 use md5::Digest;
 use serde::Serialize;
