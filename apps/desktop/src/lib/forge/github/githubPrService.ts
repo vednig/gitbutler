@@ -108,6 +108,17 @@ export class GitHubPrService implements ForgePrService {
 		if (!isGitHubPr(id)) throw INVALID_PR_TYPE;
 		return new GitHubPrMonitor(this, id);
 	}
+
+	async update(id: PullRequestId, details: { description?: string }) {
+		if (!isGitHubPr(id)) throw INVALID_PR_TYPE;
+		const { description } = details;
+		await this.octokit.pulls.update({
+			owner: this.repo.owner,
+			repo: this.repo.name,
+			pull_number: id.subject.prNumber,
+			body: description
+		});
+	}
 }
 
 function isGitHubPr(

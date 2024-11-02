@@ -22,6 +22,7 @@
 	import { getForge } from '$lib/forge/interface/forge';
 	import { getForgePrService } from '$lib/forge/interface/forgePrService';
 	import { type DetailedPullRequest, type PullRequest } from '$lib/forge/interface/types';
+	import { updatePrDescriptionTables } from '$lib/forge/shared/stackFooter';
 	import { showError, showToast } from '$lib/notifications/toasts';
 	import { isFailure } from '$lib/result';
 	import ScrollableContainer from '$lib/scroll/ScrollableContainer.svelte';
@@ -40,6 +41,7 @@
 	import Textarea from '@gitbutler/ui/Textarea.svelte';
 	import Textbox from '@gitbutler/ui/Textbox.svelte';
 	import ToggleButton from '@gitbutler/ui/ToggleButton.svelte';
+	import { isDefined } from '@gitbutler/ui/utils/typeguards';
 	import { tick } from 'svelte';
 
 	interface BaseProps {
@@ -165,6 +167,9 @@
 			error('Pull request service not available');
 			return;
 		}
+		if (props.type !== 'preview-series') {
+			return;
+		}
 
 		isLoading = true;
 		try {
@@ -203,6 +208,9 @@
 				return;
 			}
 
+			// All ids that exists prior to creating a new one.
+			const priorIds = branch.series.map((series) => series.forgeId).filter(isDefined);
+
 			const pr = await $prService.createPr({
 				title: params.title,
 				body: params.body,
@@ -212,6 +220,11 @@
 			});
 			if (props.type === 'preview-series') {
 				await branchController.updateSeriesForgeId(props.stackId, props.currentSeries.name, pr.id);
+			}
+
+			// If we now have two or more pull requests we add a stack table to the description.
+			if (priorIds.length > 0) {
+				updatePrDescriptionTables($prService, priorIds.concat([pr.id]));
 			}
 		} catch (err: any) {
 			console.error(err);

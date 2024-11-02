@@ -26,4 +26,5 @@ export interface ForgePrService {
 	merge(method: MergeMethod, id: PullRequestId): Promise<void>;
 	reopen(id: PullRequestId): Promise<void>;
 	prMonitor(id: PullRequestId): ForgePrMonitor;
+	update(id: PullRequestId, details: { description?: string }): Promise<void>;
 }
