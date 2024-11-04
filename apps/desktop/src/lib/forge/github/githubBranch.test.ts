@@ -13,14 +13,14 @@ describe.concurrent('GitHubBranch', () => {
 
 	test('branch compare url', async () => {
 		const gh = new GitHub({ repo, baseBranch });
-		const branch = gh.branch(name);
-		expect(branch?.url).toMatch(new RegExp(`...${name}$`));
+		const branchStack = gh.branch(name);
+		expect(branchStack?.url).toMatch(new RegExp(`...${name}$`));
 	});
 
 	test('fork compare url', async () => {
 		const forkStr = `${repo.owner}:${repo.name}`;
 		const gh = new GitHub({ repo, baseBranch, forkStr });
-		const branch = gh.branch(name);
-		expect(branch?.url).toMatch(new RegExp(`...${forkStr}:${name}$`));
+		const branchStack = gh.branch(name);
+		expect(branchStack?.url).toMatch(new RegExp(`...${forkStr}:${name}$`));
 	});
 });

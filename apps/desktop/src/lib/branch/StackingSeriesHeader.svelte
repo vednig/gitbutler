@@ -25,14 +25,13 @@
 	import { isFailure } from '$lib/result';
 	import { openExternalUrl } from '$lib/utils/url';
 	import { BranchController } from '$lib/vbranches/branchController';
-	import { PatchSeries, VirtualBranch, type CommitStatus } from '$lib/vbranches/types';
+	import { PatchSeries, BranchStack, type CommitStatus } from '$lib/vbranches/types';
 	import { CloudBranchesService } from '@gitbutler/shared/cloud/stacks/service';
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import PopoverActionsContainer from '@gitbutler/ui/popoverActions/PopoverActionsContainer.svelte';
 	import PopoverActionsItem from '@gitbutler/ui/popoverActions/PopoverActionsItem.svelte';
 	import { tick } from 'svelte';
-
 	interface Props {
 		currentSeries: PatchSeries;
 		isTopSeries: boolean;
@@ -45,7 +44,7 @@
 	const project = getContext(Project);
 	const aiService = getContext(AIService);
 	const promptService = getContext(PromptService);
-	const branchStore = getContextStore(VirtualBranch);
+	const branchStore = getContextStore(BranchStack);
 
 	const aiGenEnabled = projectAiGenEnabled(project.id);
 	const branchController = getContext(BranchController);
@@ -55,7 +54,7 @@
 
 	const upstreamName = $derived(currentSeries.upstreamReference ? currentSeries.name : undefined);
 	const forgeBranch = $derived(upstreamName ? $forge?.branch(upstreamName) : undefined);
-	const branch = $derived($branchStore);
+	const branchStack = $derived($branchStore);
 
 	let stackingAddSeriesModal = $state<ReturnType<typeof StackingAddSeriesModal>>();
 	let prDetailsModal = $state<ReturnType<typeof PrDetailsModal>>();
@@ -95,7 +94,7 @@
 			currentSeries.forgeId &&
 			!equalPrId(listedPr.id, currentSeries.forgeId)
 		) {
-			branchController.updateSeriesForgeId(branch.id, currentSeries.name, listedPr.id);
+			branchController.updateSeriesForgeId(branchStack.id, currentSeries.name, listedPr.id);
 		}
 	});
 
@@ -110,7 +109,7 @@
 
 	const cloudBranchCreationService = getContext(CloudBranchCreationService);
 	const cloudBranchesService = getContext(CloudBranchesService);
-	const cloudBranch = $derived(cloudBranchesService.branchForBranchId(branch.id));
+	const cloudBranch = $derived(cloudBranchesService.branchForBranchId(branchStack.id));
 	const showCreateCloudBranch = $derived(
 		$cloudEnabled &&
 			cloudBranchCreationService.canCreateBranch &&
@@ -135,13 +134,17 @@
 
 	function editTitle(title: string) {
 		if (currentSeries?.name && title !== currentSeries.name) {
-			branchController.updateSeriesName(branch.id, currentSeries.name, title);
+			branchController.updateSeriesName(branchStack.id, currentSeries.name, title);
 		}
 	}
 
 	async function editDescription(description: string | undefined | null) {
 		if (description) {
-			await branchController.updateSeriesDescription(branch.id, currentSeries.name, description);
+			await branchController.updateSeriesDescription(
+				branchStack.id,
+				currentSeries.name,
+				description
+			);
 		}
 	}
 
@@ -149,7 +152,7 @@
 		descriptionVisible = !descriptionVisible;
 
 		if (!descriptionVisible) {
-			await branchController.updateSeriesDescription(branch.id, currentSeries.name, '');
+			await branchController.updateSeriesDescription(branchStack.id, currentSeries.name, '');
 		} else {
 			await tick();
 			seriesDescriptionEl?.focus();
@@ -176,7 +179,7 @@
 		const message = messageResult.value;
 
 		if (message && message !== currentSeries.name) {
-			branchController.updateSeriesName(branch.id, currentSeries.name, message);
+			branchController.updateSeriesName(branchStack.id, currentSeries.name, message);
 		}
 	}
 </script>
@@ -188,7 +191,7 @@
 	bind:contextMenuEl={kebabContextMenu}
 	target={kebabContextMenuTrigger}
 	headName={currentSeries.name}
-	seriesCount={branch.series?.length ?? 0}
+	seriesCount={branchStack.series?.length ?? 0}
 	{toggleDescription}
 	description={currentSeries.description ?? ''}
 	onGenerateBranchName={generateBranchName}
@@ -240,7 +243,7 @@
 				icon={branchType === 'integrated' ? 'tick-small' : 'remote-branch-small'}
 				iconColor="var(--clr-core-ntrl-100)"
 				color={lineColor}
-				lineBottom={currentSeries.patches.length > 0 || branch.series.length > 1}
+				lineBottom={currentSeries.patches.length > 0 || branchStack.series.length > 1}
 			/>
 			<div class="branch-info__content">
 				<div class="text-14 text-bold branch-info__name">
@@ -304,9 +307,9 @@
 						<Button
 							style="ghost"
 							outline
-							disabled={branch.commits.length === 0}
+							disabled={branchStack.commits.length === 0}
 							onclick={() => {
-								cloudBranchCreationService.createBranch(branch.id);
+								cloudBranchCreationService.createBranch(branchStack.id);
 							}}>Publish Branch</Button
 						>
 					{/if}
@@ -321,7 +324,7 @@
 				bind:this={prDetailsModal}
 				type="preview-series"
 				{currentSeries}
-				stackId={branch.id}
+				stackId={branchStack.id}
 			/>
 		{/if}
 	</Dropzones>

@@ -11,7 +11,7 @@
 	import LineOverlay from '$lib/dropzone/LineOverlay.svelte';
 	import { getForge } from '$lib/forge/interface/forge';
 	import { BranchController } from '$lib/vbranches/branchController';
-	import { DetailedCommit, VirtualBranch, type CommitStatus } from '$lib/vbranches/types';
+	import { DetailedCommit, BranchStack, type CommitStatus } from '$lib/vbranches/types';
 	import { getContext } from '@gitbutler/shared/context';
 	import { getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
@@ -40,7 +40,7 @@
 		isBottom = false
 	}: Props = $props();
 
-	const branch = getContextStore(VirtualBranch);
+	const branchStack = getContextStore(BranchStack);
 	const branchController = getContext(BranchController);
 	const lineManagerFactory = getContext(LineManagerFactory);
 
@@ -62,8 +62,8 @@
 		})
 	);
 
-	const hasCommits = $derived($branch.commits && $branch.commits.length > 0);
-	const headCommit = $derived($branch.commits.at(0));
+	const hasCommits = $derived($branchStack.commits && $branchStack.commits.length > 0);
+	const headCommit = $derived($branchStack.commits.at(0));
 
 	const hasRemoteCommits = $derived(remoteOnlyPatches.length > 0);
 
@@ -90,7 +90,7 @@
 				{#each remoteOnlyPatches as commit, idx (commit.id)}
 					<StackingCommitCard
 						type="remote"
-						branch={$branch}
+						branch={$branchStack}
 						{commit}
 						{isUnapplied}
 						last={idx === remoteOnlyPatches.length - 1}
@@ -111,7 +111,7 @@
 						onclick={async () => {
 							isIntegratingCommits = true;
 							try {
-								await branchController.mergeUpstreamForSeries($branch.id, seriesName);
+								await branchController.mergeUpstreamForSeries($branchStack.id, seriesName);
 							} catch (e) {
 								console.error(e);
 							} finally {
@@ -134,7 +134,7 @@
 					<StackingCommitDragItem {commit}>
 						<StackingCommitCard
 							type={commit.status}
-							branch={$branch}
+							branch={$branchStack}
 							{commit}
 							{seriesName}
 							{isUnapplied}

@@ -1,13 +1,13 @@
 import { DraggableCommit } from '$lib/dragging/draggables';
 import type { BranchController } from '$lib/vbranches/branchController';
-import type { VirtualBranch, PatchSeries, StackOrder } from '$lib/vbranches/types';
+import type { BranchStack, Branch, StackOrder } from '$lib/vbranches/types';
 
 export class StackingReorderDropzone {
 	constructor(
 		private branchId: string,
 		private branchController: BranchController,
-		private currentSeries: PatchSeries,
-		private series: PatchSeries[],
+		private currentSeries: Branch,
+		private series: Branch[],
 		public commitId: string
 	) {}
 
@@ -44,11 +44,11 @@ export class StackingReorderDropzone {
 }
 
 export class StackingReorderDropzoneManager {
-	public series: Map<string, PatchSeries>;
+	public series: Map<string, Branch>;
 
 	constructor(
 		private branchController: BranchController,
-		private branch: VirtualBranch
+		private branch: BranchStack
 	) {
 		const seriesMap = new Map();
 		this.branch.series.forEach((series) => {
@@ -91,14 +91,14 @@ export class StackingReorderDropzoneManager {
 export class StackingReorderDropzoneManagerFactory {
 	constructor(private branchController: BranchController) {}
 
-	build(branch: VirtualBranch) {
+	build(branch: BranchStack) {
 		return new StackingReorderDropzoneManager(this.branchController, branch);
 	}
 }
 
 function buildNewStackOrder(
-	allSeries: PatchSeries[],
-	currentSeries: PatchSeries,
+	allSeries: Branch[],
+	currentSeries: Branch,
 	actorCommitId: string,
 	targetCommitId: string
 ): StackOrder | undefined {
@@ -143,7 +143,7 @@ function buildNewStackOrder(
 }
 
 function distanceBetweenDropzones(
-	allSeries: PatchSeries[],
+	allSeries: Branch[],
 	actorDropzoneId: string,
 	targetDropzoneId: string
 ) {

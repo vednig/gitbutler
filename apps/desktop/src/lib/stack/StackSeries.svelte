@@ -6,10 +6,10 @@
 	import { StackingReorderDropzoneManagerFactory } from '$lib/dragging/stackingReorderDropzoneManager';
 	import { getContext } from '@gitbutler/shared/context';
 	import EmptyStatePlaceholder from '@gitbutler/ui/EmptyStatePlaceholder.svelte';
-	import type { VirtualBranch } from '$lib/vbranches/types';
+	import type { BranchStack } from '$lib/vbranches/types';
 
 	interface Props {
-		branch: VirtualBranch;
+		branch: BranchStack;
 	}
 
 	const { branch }: Props = $props();

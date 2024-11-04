@@ -15,7 +15,7 @@
 	import { intersectionObserver } from '$lib/utils/intersectionObserver';
 	import { BranchController } from '$lib/vbranches/branchController';
 	import { FileIdSelection } from '$lib/vbranches/fileIdSelection';
-	import { VirtualBranch } from '$lib/vbranches/types';
+	import { BranchStack } from '$lib/vbranches/types';
 	import { getContext, getContextStore, getContextStoreBySymbol } from '@gitbutler/shared/context';
 	import { persisted } from '@gitbutler/shared/persisted';
 	import Button from '@gitbutler/ui/Button.svelte';
@@ -32,9 +32,9 @@
 
 	const branchController = getContext(BranchController);
 	const fileIdSelection = getContext(FileIdSelection);
-	const branchStore = getContextStore(VirtualBranch);
+	const branchStore = getContextStore(BranchStack);
 	const project = getContext(Project);
-	const branch = $derived($branchStore);
+	const branchStack = $derived($branchStore);
 
 	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
 	const defaultBranchWidthRem = persisted<number>(24, 'defaulBranchWidth' + project.id);
@@ -46,23 +46,23 @@
 	let rsViewport = $state<HTMLElement>();
 
 	$effect(() => {
-		if ($commitBoxOpen && branch.files.length === 0) {
+		if ($commitBoxOpen && branchStack.files.length === 0) {
 			commitBoxOpen.set(false);
 		}
 	});
 
 	onMount(() => {
-		laneWidth = lscache.get(laneWidthKey + branch.id);
+		laneWidth = lscache.get(laneWidthKey + branchStack.id);
 	});
 
 	let scrollEndVisible = $state(true);
 	let isPushingCommits = $state(false);
 
 	const hasConflicts = $derived(
-		branch.series.flatMap((s) => s.patches).some((patch) => patch.conflicted)
+		branchStack.series.flatMap((s) => s.patches).some((patch) => patch.conflicted)
 	);
-	const branchUpstreamPatches = $derived(branch.series.flatMap((s) => s.upstreamPatches));
-	const branchPatches = $derived(branch.series.flatMap((s) => s.patches));
+	const branchUpstreamPatches = $derived(branchStack.series.flatMap((s) => s.upstreamPatches));
+	const branchPatches = $derived(branchStack.series.flatMap((s) => s.patches));
 
 	let canPush = $derived.by(() => {
 		if (branchUpstreamPatches.length > 0) return true;
@@ -74,14 +74,14 @@
 	const listingService = getForgeListingService();
 	const hostedListingServiceStore = getForgeListingService();
 
-	const stackBranches = $derived(branch.series.map((s) => s.name));
+	const stackBranches = $derived(branchStack.series.map((s) => s.name));
 	const prStore = $derived($hostedListingServiceStore?.prs);
 	const stackPrs = $derived($prStore?.filter((pr) => stackBranches.includes(pr.sourceBranch)));
 
 	async function push() {
 		isPushingCommits = true;
 		try {
-			await branchController.pushBranch(branch.id, branch.requiresForce, true);
+			await branchController.pushBranch(branchStack.id, branchStack.requiresForce, true);
 			$listingService?.refresh();
 		} finally {
 			isPushingCommits = false;
@@ -91,12 +91,15 @@
 
 {#if $isLaneCollapsed}
 	<div class="collapsed-lane-container">
-		<StackHeader uncommittedChanges={branch.files.length} {isLaneCollapsed} />
+		<StackHeader uncommittedChanges={branchStack.files.length} {isLaneCollapsed} />
 		<div class="collapsed-lane-divider" data-remove-from-draggable></div>
 	</div>
 {:else}
 	<div class="resizer-wrapper">
-		<div class="branch-card hide-native-scrollbar" class:target-branch={branch.selectedForChanges}>
+		<div
+			class="branch-card hide-native-scrollbar"
+			class:target-branch={branchStack.selectedForChanges}
+		>
 			<ScrollableContainer
 				wide
 				padding={{
@@ -112,22 +115,22 @@
 				>
 					<StackHeader {isLaneCollapsed} stackPrs={stackPrs?.length ?? 0} />
 					<div class="card-stacking">
-						{#if branch.files?.length > 0}
+						{#if branchStack.files?.length > 0}
 							<div class="branch-card__files">
 								<Dropzones type="file">
 									<BranchFiles
 										isUnapplied={false}
-										files={branch.files}
+										files={branchStack.files}
 										showCheckboxes={$commitBoxOpen}
 										allowMultiple
 										commitDialogExpanded={commitBoxOpen}
 										focusCommitDialog={() => commitDialog?.focus()}
 									/>
-									{#if branch.conflicted}
+									{#if branchStack.conflicted}
 										<div class="card-notifications">
 											<InfoMessage filled outlined={false} style="error">
 												<svelte:fragment slot="title">
-													{#if branch.files.some((f) => f.conflicted)}
+													{#if branchStack.files.some((f) => f.conflicted)}
 														This virtual branch conflicts with upstream changes. Please resolve all
 														conflicts and commit before you can continue.
 													{:else}
@@ -143,10 +146,10 @@
 									bind:this={commitDialog}
 									projectId={project.id}
 									expanded={commitBoxOpen}
-									hasSectionsAfter={branch.commits.length > 0}
+									hasSectionsAfter={branchStack.commits.length > 0}
 								/>
 							</div>
-						{:else if branch.commits.length === 0}
+						{:else if branchStack.commits.length === 0}
 							<Dropzones type="file">
 								<div class="new-branch">
 									<EmptyStatePlaceholder image={laneNewSvg} width={180} bottomMargin={48}>
@@ -172,7 +175,7 @@
 						{/if}
 						<Spacer dotted />
 						<div class="lane-branches">
-							<StackSeries {branch} />
+							<StackSeries branch={branchStack} />
 						</div>
 					</div>
 				</div>
@@ -206,7 +209,11 @@
 								: undefined}
 							onclick={push}
 						>
-							{branch.requiresForce ? 'Force push' : branch.series.length > 1 ? 'Push All' : 'Push'}
+							{branchStack.requiresForce
+								? 'Force push'
+								: branchStack.series.length > 1
+									? 'Push All'
+									: 'Push'}
 						</Button>
 					</div>
 				{/if}
@@ -221,7 +228,7 @@
 						defaultLineColor={$fileIdSelection.length === 1 ? 'transparent' : 'var(--clr-border-2)'}
 						on:width={(e) => {
 							laneWidth = e.detail / (16 * $userSettings.zoom);
-							lscache.set(laneWidthKey + branch.id, laneWidth, 7 * 1440); // 7 day ttl
+							lscache.set(laneWidthKey + branchStack.id, laneWidth, 7 * 1440); // 7 day ttl
 							$defaultBranchWidthRem = laneWidth;
 						}}
 					/>

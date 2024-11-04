@@ -7,7 +7,7 @@
 	import { projectAiGenEnabled } from '$lib/config/config';
 	import { openExternalUrl } from '$lib/utils/url';
 	import { BranchController } from '$lib/vbranches/branchController';
-	import { VirtualBranch, type CommitStatus } from '$lib/vbranches/types';
+	import { BranchStack, type CommitStatus } from '$lib/vbranches/types';
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import Modal from '@gitbutler/ui/Modal.svelte';
@@ -49,7 +49,7 @@
 
 	const project = getContext(Project);
 	const aiService = getContext(AIService);
-	const branchStore = getContextStore(VirtualBranch);
+	const branchStore = getContextStore(BranchStack);
 	const branchController = getContext(BranchController);
 	const aiGenEnabled = projectAiGenEnabled(project.id);
 
@@ -67,10 +67,10 @@
 		aiConfigurationValid = await aiService.validateConfiguration();
 	}
 
-	const branch = $derived($branchStore);
+	const branchStack = $derived($branchStore);
 
 	export function showSeriesRenameModal() {
-		renameSeriesModal.show(branch);
+		renameSeriesModal.show(branchStack);
 	}
 </script>
 
@@ -96,7 +96,7 @@
 			label="Rename"
 			disabled={branchType === 'integrated'}
 			onclick={async () => {
-				renameSeriesModal.show(branch);
+				renameSeriesModal.show(branchStack);
 				contextMenuEl?.close();
 			}}
 		/>
@@ -104,7 +104,7 @@
 			<ContextMenuItem
 				label="Delete"
 				onclick={() => {
-					deleteSeriesModal.show(branch);
+					deleteSeriesModal.show(branchStack);
 					contextMenuEl?.close();
 				}}
 			/>
@@ -144,7 +144,7 @@
 	bind:this={renameSeriesModal}
 	onSubmit={(close) => {
 		if (newHeadName && newHeadName !== headName) {
-			branchController.updateSeriesName(branch.id, headName, newHeadName);
+			branchController.updateSeriesName(branchStack.id, headName, newHeadName);
 		}
 		close();
 	}}
@@ -171,7 +171,7 @@
 	onSubmit={async (close) => {
 		try {
 			isDeleting = true;
-			await branchController.removePatchSeries(branch.id, headName);
+			await branchController.removePatchSeries(branchStack.id, headName);
 			close();
 		} finally {
 			isDeleting = false;

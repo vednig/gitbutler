@@ -19,7 +19,7 @@
 		Commit,
 		DetailedCommit,
 		RemoteFile,
-		VirtualBranch,
+		BranchStack,
 		type CommitStatus
 	} from '$lib/vbranches/types';
 	import { getContext, getContextStore, maybeGetContext } from '@gitbutler/shared/context';
@@ -31,7 +31,7 @@
 	import { getTimeAgo } from '@gitbutler/ui/utils/timeAgo';
 	import { type Snippet } from 'svelte';
 
-	export let branch: VirtualBranch | undefined = undefined;
+	export let branch: BranchStack | undefined = undefined;
 	export let commit: DetailedCommit | Commit;
 	export let commitUrl: string | undefined = undefined;
 	export let isHeadCommit: boolean = false;

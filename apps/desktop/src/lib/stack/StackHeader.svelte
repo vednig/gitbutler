@@ -5,7 +5,7 @@
 	import DefaultTargetButton from '$lib/branch/DefaultTargetButton.svelte';
 	import ContextMenu from '$lib/components/contextmenu/ContextMenu.svelte';
 	import { BranchController } from '$lib/vbranches/branchController';
-	import { VirtualBranch } from '$lib/vbranches/types';
+	import { BranchStack } from '$lib/vbranches/types';
 	import { getContext, getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
@@ -20,8 +20,8 @@
 	const { uncommittedChanges = 0, isLaneCollapsed, stackPrs = 0 }: Props = $props();
 
 	const branchController = getContext(BranchController);
-	const branchStore = getContextStore(VirtualBranch);
-	const branch = $derived($branchStore);
+	const branchStore = getContextStore(BranchStack);
+	const branchStack = $derived($branchStore);
 
 	let contextMenu = $state<ReturnType<typeof ContextMenu>>();
 	let isContextMenuOpen = $state(false);
@@ -31,7 +31,7 @@
 	function handleBranchNameChange(title: string) {
 		if (title === '') return;
 
-		branchController.updateBranchName(branch.id, title);
+		branchController.updateBranchName(branchStack.id, title);
 	}
 
 	function expandLane() {
@@ -42,7 +42,7 @@
 		$isLaneCollapsed = true;
 	}
 
-	const hasIntegratedCommits = $derived(branch.commits?.some((b) => b.isIntegrated));
+	const hasIntegratedCommits = $derived(branchStack.commits?.some((b) => b.isIntegrated));
 
 	let headerInfoHeight = $state(0);
 </script>
@@ -50,7 +50,7 @@
 {#if $isLaneCollapsed}
 	<div
 		class="card collapsed-lane"
-		class:collapsed-lane_target-branch={branch.selectedForChanges}
+		class:collapsed-lane_target-branch={branchStack.selectedForChanges}
 		onkeydown={(e) => e.key === 'Enter' && expandLane()}
 		tabindex="0"
 		role="button"
@@ -66,7 +66,7 @@
 			<div class="collapsed-lane__info" style="width: {headerInfoHeight}px">
 				<div class="collapsed-lane__label-wrap">
 					<h3 class="collapsed-lane__label text-13 text-bold">
-						{branch.name}
+						{branchStack.name}
 					</h3>
 					{#if uncommittedChanges > 0}
 						<Button
@@ -85,10 +85,10 @@
 				<div class="collapsed-lane__info__details">
 					<ActiveBranchStatus
 						{hasIntegratedCommits}
-						remoteExists={!!branch.upstream}
+						remoteExists={!!branchStack.upstream}
 						isLaneCollapsed={$isLaneCollapsed}
 					/>
-					{#if branch.selectedForChanges}
+					{#if branchStack.selectedForChanges}
 						<Button style="pop" kind="soft" size="tag" clickable={false} icon="target">
 							Default branch
 						</Button>
@@ -101,8 +101,9 @@
 	<div class="header__wrapper">
 		<div
 			class="header card"
-			class:header_target-branch={branch.selectedForChanges}
-			class:header_target-branch-animation={isTargetBranchAnimated && branch.selectedForChanges}
+			class:header_target-branch={branchStack.selectedForChanges}
+			class:header_target-branch-animation={isTargetBranchAnimated &&
+				branchStack.selectedForChanges}
 		>
 			<div class="header__info-wrapper">
 				<div data-drag-handle class="header__drag-handle">
@@ -111,7 +112,10 @@
 
 				<div class="header__info">
 					<div class="header__info-row spread">
-						<BranchLabel name={branch.name} onChange={(name) => handleBranchNameChange(name)} />
+						<BranchLabel
+							name={branchStack.name}
+							onChange={(name) => handleBranchNameChange(name)}
+						/>
 						<Button
 							bind:el={meatballButtonEl}
 							activated={isContextMenuOpen}
@@ -133,10 +137,10 @@
 						<span class="button-group">
 							<DefaultTargetButton
 								size="tag"
-								selectedForChanges={branch.selectedForChanges}
+								selectedForChanges={branchStack.selectedForChanges}
 								onclick={async () => {
 									isTargetBranchAnimated = true;
-									await branchController.setSelectedForChanges(branch.id);
+									await branchController.setSelectedForChanges(branchStack.id);
 								}}
 							/>
 							<Button
@@ -147,7 +151,7 @@
 								clickable={false}
 								tooltip="Series"
 							>
-								{branch.series.length ?? 0}
+								{branchStack.series.length ?? 0}
 							</Button>
 							<Button
 								style="neutral"

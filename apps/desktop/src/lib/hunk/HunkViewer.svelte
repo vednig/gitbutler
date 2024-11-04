@@ -8,7 +8,7 @@
 	import LargeDiffMessage from '$lib/shared/LargeDiffMessage.svelte';
 	import { type HunkSection } from '$lib/utils/fileSections';
 	import { SelectedOwnership } from '$lib/vbranches/ownership';
-	import { VirtualBranch, type Hunk } from '$lib/vbranches/types';
+	import { BranchStack, type Hunk } from '$lib/vbranches/types';
 	import {
 		getContext,
 		getContextStoreBySymbol,
@@ -43,7 +43,7 @@
 	const selectedOwnership: Writable<SelectedOwnership> | undefined =
 		maybeGetContextStore(SelectedOwnership);
 	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
-	const branch = maybeGetContextStore(VirtualBranch);
+	const branchStack = maybeGetContextStore(BranchStack);
 	const project = getContext(Project);
 
 	let alwaysShow = $state(false);
@@ -78,7 +78,12 @@
 		class:opacity-60={section.hunk.locked && !isFileLocked}
 		oncontextmenu={(e) => e.preventDefault()}
 		use:draggableElement={{
-			data: new DraggableHunk($branch?.id || '', section.hunk, section.hunk.lockedTo, commitId),
+			data: new DraggableHunk(
+				$branchStack?.id || '',
+				section.hunk,
+				section.hunk.lockedTo,
+				commitId
+			),
 			disabled: draggingDisabled
 		}}
 	>

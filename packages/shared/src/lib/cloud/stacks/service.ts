@@ -304,9 +304,9 @@ export class CloudBranchesService {
 
 		store = derived(this.branches, (branches): LoadableOptional<CloudBranch> => {
 			if (!branches) return { state: 'uninitialized' };
-			const branch = branches.find((cloudBranch) => cloudBranch.branchId === branchId);
-			if (branch) {
-				return { state: 'found', value: branch };
+			const branchStack = branches.find((cloudBranch) => cloudBranch.branchId === branchId);
+			if (branchStack) {
+				return { state: 'found', value: branchStack };
 			} else {
 				return { state: 'not-found' };
 			}
@@ -322,9 +322,9 @@ export class CloudBranchesService {
 
 		store = derived(this.branches, (branches): LoadableOptional<CloudBranch> => {
 			if (!branches) return { state: 'uninitialized' };
-			const branch = branches.find((cloudBranch) => cloudBranch.uuid === cloudBranchId);
-			if (branch) {
-				return { state: 'found', value: branch };
+			const branchStack = branches.find((cloudBranch) => cloudBranch.uuid === cloudBranchId);
+			if (branchStack) {
+				return { state: 'found', value: branchStack };
 			} else {
 				return { state: 'not-found' };
 			}

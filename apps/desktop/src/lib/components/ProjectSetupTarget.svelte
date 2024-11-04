@@ -48,17 +48,17 @@
 
 	let selectedBranch = $state<RemoteBranchInfo | undefined>(undefined);
 	const defaultBranch = $derived(getBestBranch(remoteBranches));
-	const branch = $derived(selectedBranch ?? defaultBranch);
+	const branchStack = $derived(selectedBranch ?? defaultBranch);
 
 	let selectedRemote = $state<string | undefined>(undefined);
 	const defaultRemote = $derived(
-		(branch && getBranchRemoteFromRef(branch.name)) ?? getBestRemote(remotes)
+		(branchStack && getBranchRemoteFromRef(branchStack.name)) ?? getBestRemote(remotes)
 	);
 	const remote = $derived(selectedRemote ?? defaultRemote);
 
 	async function onSetTargetClick() {
-		if (!branch || !remote) return;
-		dispatch('branchSelected', [branch.name, remote]);
+		if (!branchStack || !remote) return;
+		dispatch('branchSelected', [branchStack.name, remote]);
 	}
 
 	const projectsService = getContext(ProjectsService);
@@ -83,7 +83,7 @@
 	<div class="project-setup__fields">
 		<div class="project-setup__field-wrap">
 			<Select
-				value={branch?.name}
+				value={branchStack?.name}
 				options={remoteBranches.map((b) => ({ label: b.name, value: b.name }))}
 				onselect={(value) => {
 					selectedBranch = { name: value };
@@ -92,7 +92,7 @@
 				searchable
 			>
 				{#snippet itemSnippet({ item, highlighted })}
-					<SelectItem selected={item.value === branch?.name} {highlighted}>
+					<SelectItem selected={item.value === branchStack?.name} {highlighted}>
 						{item.label}
 					</SelectItem>
 				{/snippet}

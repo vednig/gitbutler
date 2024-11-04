@@ -2,7 +2,7 @@
 	import { getNameNormalizationServiceContext } from '$lib/branches/nameNormalizationService';
 	import { getForge } from '$lib/forge/interface/forge';
 	import { openExternalUrl } from '$lib/utils/url';
-	import { VirtualBranch } from '$lib/vbranches/types';
+	import { BranchStack } from '$lib/vbranches/types';
 	import { getContextStore } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
 
@@ -18,8 +18,8 @@
 		remoteExists: boolean;
 	} = $props();
 
-	const branch = getContextStore(VirtualBranch);
-	const upstreamName = $derived($branch.upstreamName);
+	const branchStack = getContextStore(BranchStack);
+	const upstreamName = $derived($branchStack.upstreamName);
 	const forge = getForge();
 	const forgeBranch = $derived(upstreamName ? $forge?.branch(upstreamName) : undefined);
 
@@ -29,7 +29,7 @@
 
 	$effect(() => {
 		nameNormalizationService
-			.normalize($branch.displayName)
+			.normalize($branchStack.displayName)
 			.then((name) => {
 				normalizedBranchName = name;
 			})
@@ -97,6 +97,6 @@
 			e.stopPropagation();
 		}}
 	>
-		{isLaneCollapsed ? 'View branch' : $branch.displayName}
+		{isLaneCollapsed ? 'View branch' : $branchStack.displayName}
 	</Button>
 {/if}

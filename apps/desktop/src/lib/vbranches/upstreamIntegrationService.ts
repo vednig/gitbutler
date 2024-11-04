@@ -3,7 +3,7 @@ import { VirtualBranchService } from '$lib/vbranches/virtualBranch';
 import { isDefined } from '@gitbutler/ui/utils/typeguards';
 import { derived, readable, type Readable } from 'svelte/store';
 import type { Project } from '$lib/backend/projects';
-import type { VirtualBranch } from '$lib/vbranches/types';
+import type { BranchStack } from '$lib/vbranches/types';
 
 export type BranchStatus =
 	| {
@@ -16,7 +16,7 @@ export type BranchStatus =
 			};
 	  };
 
-export type BranchStatusInfo = { branch: VirtualBranch; status: BranchStatus };
+export type BranchStatusInfo = { branch: BranchStack; status: BranchStatus };
 
 export type BranchStatusesWithBranches =
 	| {
@@ -116,12 +116,12 @@ export class UpstreamIntegrationService {
 					type: 'updatesRequired',
 					subject: branchStatuses.subject
 						.map((status) => {
-							const branch = branches.find((appliedBranch) => appliedBranch.id === status[0]);
+							const branchStack = branches.find((appliedBranch) => appliedBranch.id === status[0]);
 
-							if (!branch) return;
+							if (!branchStack) return;
 
 							return {
-								branch,
+								branch: branchStack,
 								status: status[1]
 							};
 						})
