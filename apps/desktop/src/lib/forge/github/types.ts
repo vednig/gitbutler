@@ -4,11 +4,14 @@ import type {
 	CheckSuite,
 	DetailedPullRequest,
 	Label,
-	PullRequest
+	PullRequest,
+	ReviewStatus
 } from '../interface/types';
 import type { RestEndpointMethodTypes } from '@octokit/rest';
 
 export type DetailedGitHubPullRequest = RestEndpointMethodTypes['pulls']['get']['response']['data'];
+export type PullRequestReviewsResponse =
+	RestEndpointMethodTypes['pulls']['listReviews']['response']['data'];
 
 export function parseGitHubDetailedPullRequest(
 	data: DetailedGitHubPullRequest
@@ -132,4 +135,19 @@ export function parseGitHubCheckRuns(data: GitHubListChecksResp): ChecksStatus |
 		skipped,
 		finished
 	};
+}
+
+export function parseGitHubReview(data: PullRequestReviewsResponse): ReviewStatus {
+	// The response contains reviews in chronological order, and we want to
+	// look at the last review first, such that we can infer the outcome
+	// correctly.
+	data.reverse();
+	for (const review of data) {
+		if (review.state === 'APPROVED' && review.submitted_at) {
+			return { approved: true, approvedAt: new Date(review.submitted_at) };
+		} else if (review.state === 'CHANGES_REQUESTED') {
+			return { approved: false };
+		}
+	}
+	return { approved: false };
 }

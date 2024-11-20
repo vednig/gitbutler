@@ -103,6 +103,11 @@
 		sourceBranch && shouldCheck ? $forge?.checksMonitor(sourceBranch) : undefined
 	);
 
+	const loadReview = $derived($pr && !$pr.merged); // Deduplication.
+	const forgeReview = $derived(
+		prNumber && prService && loadReview ? $prService?.review(prNumber) : undefined
+	);
+
 	// Extra reference to avoid potential infinite loop.
 	let lastSeenPush: Date | undefined;
 
@@ -122,7 +127,11 @@
 	}
 
 	async function updateStatusAndChecks() {
-		await Promise.allSettled([prMonitor?.refresh(), checksMonitor?.update()]);
+		await Promise.allSettled([
+			prMonitor?.refresh(),
+			checksMonitor?.update(),
+			forgeReview?.refresh()
+		]);
 	}
 
 	const projectService = getContext(ProjectService);
@@ -373,6 +382,7 @@
 								reopenPr={handleReopenPr}
 								openPrDetailsModal={handleOpenPR}
 								pr={$pr}
+								{forgeReview}
 								{checksMonitor}
 								{prMonitor}
 							/>

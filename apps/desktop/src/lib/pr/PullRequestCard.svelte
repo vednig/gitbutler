@@ -17,6 +17,7 @@
 	import Button from '@gitbutler/ui/Button.svelte';
 	import { type ComponentColor } from '@gitbutler/ui/utils/colorTypes';
 	import type { ForgePrMonitor } from '$lib/forge/interface/forgePrMonitor';
+	import type { ForgeReview } from '$lib/forge/interface/forgeReviewService';
 	import type { DetailedPullRequest } from '$lib/forge/interface/types';
 	import type { MessageStyle } from '$lib/shared/InfoMessage.svelte';
 	import type iconsJson from '@gitbutler/ui/data/icons.json';
@@ -25,12 +26,21 @@
 		pr: DetailedPullRequest;
 		checksMonitor?: ForgeChecksMonitor;
 		prMonitor?: ForgePrMonitor;
+		forgeReview?: ForgeReview;
 		reloadPR: () => void;
 		reopenPr: () => Promise<void>;
 		openPrDetailsModal: () => void;
 	}
 
-	const { pr, checksMonitor, prMonitor, reloadPR, reopenPr, openPrDetailsModal }: Props = $props();
+	const {
+		pr,
+		checksMonitor,
+		prMonitor,
+		forgeReview,
+		reloadPR,
+		reopenPr,
+		openPrDetailsModal
+	}: Props = $props();
 
 	type StatusInfo = {
 		text: string;
@@ -50,6 +60,7 @@
 
 	const forgeListingService = getForgeListingService();
 	const prService = getForgePrService();
+	const reviewStatus = $derived(forgeReview?.status);
 
 	const checks = $derived(checksMonitor?.status);
 
@@ -252,6 +263,9 @@
 				>
 					{checksTagInfo.text}
 				</Button>
+			{/if}
+			{#if $reviewStatus?.approved}
+				<Button icon="success-small" size="tag" style="success" outline>Approved</Button>
 			{/if}
 			{#if pr.htmlUrl}
 				<Button

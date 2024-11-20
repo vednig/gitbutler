@@ -1,4 +1,5 @@
 import { GitHubPrMonitor } from './githubPrMonitor';
+import { GitHubReview } from './githubReview';
 import { DEFAULT_HEADERS } from './headers';
 import { ghResponseToInstance, parseGitHubDetailedPullRequest, parseGitHubReview } from './types';
 import { sleep } from '$lib/utils/sleep';
@@ -11,7 +12,8 @@ import type {
 	CreatePullRequestArgs,
 	DetailedPullRequest,
 	MergeMethod,
-	PullRequest
+	PullRequest,
+	ReviewStatus
 } from '../interface/types';
 import type { Octokit } from '@octokit/rest';
 
@@ -123,6 +125,10 @@ export class GitHubPrService implements ForgePrService {
 
 	prMonitor(prNumber: number): GitHubPrMonitor {
 		return new GitHubPrMonitor(this, prNumber);
+	}
+
+	review(prNumber: number): GitHubReview {
+		return new GitHubReview(this, prNumber);
 	}
 
 	async update(prNumber: number, details: { description?: string; state?: 'open' | 'closed' }) {

@@ -53,7 +53,6 @@ export class BranchController {
 
 	async commitBranch(
 		branchId: string,
-		branchName: string,
 		message: string,
 		ownership: string | undefined = undefined,
 		runHooks = false
@@ -64,7 +63,7 @@ export class BranchController {
 				branch: branchId,
 				message,
 				ownership,
-				runHooks: runHooks
+				runHooks
 			});
 			posthog.capture('Commit Successful');
 		} catch (err: any) {

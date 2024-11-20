@@ -1,5 +1,6 @@
 import { buildContextStore } from '@gitbutler/shared/context';
 import type { ForgePrMonitor } from './forgePrMonitor';
+import type { ForgeReview as ForgeReview } from './forgeReviewService';
 import type { CreatePullRequestArgs, DetailedPullRequest, MergeMethod, PullRequest } from './types';
 import type { Writable } from 'svelte/store';
 
@@ -20,6 +21,7 @@ export interface ForgePrService {
 	merge(method: MergeMethod, prNumber: number): Promise<void>;
 	reopen(prNumber: number): Promise<void>;
 	prMonitor(prNumber: number): ForgePrMonitor;
+	review(prNumber: number): ForgeReview | undefined;
 	update(
 		prNumber: number,
 		details: { description?: string; state?: 'open' | 'closed' }

@@ -90,3 +90,8 @@ export type CreatePullRequestArgs = {
 	baseBranchName: string;
 	upstreamName: string;
 };
+
+export type ReviewStatus = {
+	approved: boolean;
+	approvedAt?: Date;
+};
