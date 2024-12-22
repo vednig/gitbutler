@@ -34,7 +34,7 @@ export function conflictEntryHint(presence: ConflictEntryPresence): string {
 		theirsVerb = 'deleted';
 	}
 
-	return `You have ${theirsVerb} this file, They have ${oursVerb} this file.`;
+	return `Conflicted: You have ${theirsVerb} this file, They have ${oursVerb} this file.`;
 }
 
 function hunkLooksConflicted(hunk: RemoteHunk): boolean {

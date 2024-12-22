@@ -317,9 +317,7 @@
 					{/if}
 
 					{#if conflicted}
-						<Tooltip
-							text={"Conflicted commits must be resolved before they can be ammended or squashed.\nPlease resolve conflicts using the 'Resolve conflicts' button"}
-						>
+						<Tooltip text="Resolve before amending or squashing. Use 'Resolve conflicts' button">
 							<div class="commit__conflicted">
 								<Icon name="warning-small" />
 
