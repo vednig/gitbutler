@@ -13,7 +13,6 @@
 		id?: string;
 		filePath: string;
 		fileStatus?: FileStatus;
-		fileStatusStyle?: 'dot' | 'full';
 		draggable?: boolean;
 		selected?: boolean;
 		clickable?: boolean;
@@ -40,7 +39,6 @@
 		id,
 		filePath,
 		fileStatus,
-		fileStatusStyle = 'dot',
 		draggable = false,
 		selected = false,
 		clickable = true,
@@ -138,7 +136,7 @@
 		{/if}
 
 		{#if fileStatus}
-			<FileStatusBadge status={fileStatus} style={fileStatusStyle} />
+			<FileStatusBadge status={fileStatus} />
 		{/if}
 
 		{#if draggable}

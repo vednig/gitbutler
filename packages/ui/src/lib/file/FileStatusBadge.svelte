@@ -9,7 +9,7 @@
 		kind?: ComponentStyleKind;
 	}
 
-	const { status, style = 'full', kind = 'solid' }: Props = $props();
+	const { status, style = 'dot', kind = 'solid' }: Props = $props();
 
 	function getFullStatusText(status: FileStatus): string {
 		switch (status) {

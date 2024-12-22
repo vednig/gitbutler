@@ -13,7 +13,6 @@
 	args={{
 		filePath: '/path/to/file.svelte',
 		fileStatus: 'A',
-		fileStatusStyle: 'dot',
 		clickable: true,
 		selected: false,
 		conflicted: true,
@@ -35,7 +34,6 @@
 	args={{
 		filePath: '/path/to/file.svelte',
 		fileStatus: 'A',
-		fileStatusStyle: 'dot',
 		clickable: false,
 		selected: false,
 		conflicted: true,
