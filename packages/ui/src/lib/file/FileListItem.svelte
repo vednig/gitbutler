@@ -16,6 +16,7 @@
 		draggable?: boolean;
 		selected?: boolean;
 		clickable?: boolean;
+		disabledByConflict?: boolean;
 		showCheckbox?: boolean;
 		checked?: boolean;
 		indeterminate?: boolean;
@@ -42,6 +43,7 @@
 		draggable = false,
 		selected = false,
 		clickable = true,
+		disabledByConflict = false,
 		showCheckbox = false,
 		checked = $bindable(),
 		indeterminate,
@@ -57,6 +59,8 @@
 	}: Props = $props();
 
 	const fileInfo = $derived(splitFilePath(filePath));
+
+	let clickedWhenConflict = $state(false);
 </script>
 
 <div
@@ -65,12 +69,28 @@
 	data-file-id={id}
 	class="file-list-item"
 	class:selected-draggable={selected}
+	class:disabledByConflict
 	class:clickable
 	class:draggable
 	aria-selected={selected}
 	role="option"
-	tabindex="-1"
-	{onclick}
+	tabindex={-1}
+	class:wiggle-animation={clickedWhenConflict}
+	onclick={(e) => {
+		e.stopPropagation();
+
+		if (clickable) {
+			onclick?.(e);
+		}
+
+		if (disabledByConflict) {
+			clickedWhenConflict = true;
+
+			setTimeout(() => {
+				clickedWhenConflict = false;
+			}, 500);
+		}
+	}}
 	{onkeydown}
 	oncontextmenu={(e) => {
 		if (oncontextmenu) {
@@ -116,6 +136,7 @@
 				<button
 					type="button"
 					class="mark-resolved-btn"
+					tabindex={disabledByConflict ? -1 : 0}
 					onclick={(e) => {
 						e.stopPropagation();
 						onresolveclick?.(e);
@@ -139,11 +160,11 @@
 			<FileStatusBadge status={fileStatus} />
 		{/if}
 
-		{#if draggable}
-			<div class="draggable-handle">
+		<div class="draggable-handle">
+			{#if draggable}
 				<Icon name="draggable-narrow" />
-			</div>
-		{/if}
+			{/if}
+		</div>
 	</div>
 </div>
 
@@ -169,21 +190,27 @@
 		&:not(:last-child) {
 			border-bottom: 1px solid var(--clr-border-3);
 		}
+
+		&.disabledByConflict {
+			background-color: var(--clr-bg-2);
+			opacity: 0.6;
+		}
+
+		&.draggable {
+			&:hover {
+				& .draggable-handle {
+					opacity: 1;
+				}
+			}
+		}
 	}
 
 	.file-list-item.clickable {
 		cursor: pointer;
 
-		&:not(.selected-draggable):hover {
+		&:not(.selected-draggable):hover,
+		&:not(.selected-draggable):focus {
 			background-color: var(--clr-bg-1-muted);
-		}
-	}
-
-	.draggable {
-		&:hover {
-			& .draggable-handle {
-				opacity: 1;
-			}
 		}
 	}
 

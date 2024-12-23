@@ -132,9 +132,19 @@
 
 	{#if conflictedFiles}
 		{#each conflictedFiles.entries.entries() as [key, value]}
-			<FileListItem filePath={key} conflicted={true} conflictHint={conflictEntryHint(value)} />
+			<FileListItem
+				filePath={key}
+				conflicted
+				disabledByConflict
+				conflictHint={conflictEntryHint(value)}
+				onclick={() => {
+					// toasts.error('Cannot preview conflicted files. Resolve the conflict first.');
+					// selectFilesInList(e, file, fileIdSelection, displayedFiles, allowMultiple, $commit);
+				}}
+			/>
 		{/each}
 	{/if}
+
 	<LazyloadContainer
 		minTriggerCount={80}
 		ontrigger={() => {
