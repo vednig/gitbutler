@@ -730,7 +730,6 @@ pub fn commit(
     stack_id: StackId,
     message: &str,
     ownership: Option<&BranchOwnershipClaims>,
-    run_hooks: bool,
 ) -> Result<git2::Oid> {
     let mut message_buffer = message.to_owned();
 
@@ -743,30 +742,11 @@ pub fn commit(
         }
     }
 
-    if run_hooks {
-        let hook_result =
-            git2_hooks::hooks_commit_msg(ctx.repo(), Some(&["../.husky"]), &mut message_buffer)
-                .context("failed to run hook")
-                .context(Code::CommitHookFailed)?;
-
-        if let HookResult::RunNotSuccessful { stdout, stderr, .. } = &hook_result {
-            return Err(
-                anyhow!("commit-msg hook rejected: {}", join_output(stdout, stderr))
-                    .context(Code::CommitHookFailed),
-            );
-        }
-
-        let hook_result = git2_hooks::hooks_pre_commit(ctx.repo(), Some(&["../.husky"]))
-            .context("failed to run hook")
-            .context(Code::CommitHookFailed)?;
-
-        if let HookResult::RunNotSuccessful { stdout, stderr, .. } = &hook_result {
-            return Err(
-                anyhow!("commit hook rejected: {}", join_output(stdout, stderr))
-                    .context(Code::CommitHookFailed),
-            );
-        }
-    }
+    let mut stack = ctx.project().virtual_branches().get_stack(stack_id)?;
+    let ownership = ownership
+        .map::<Result<&BranchOwnershipClaims>, _>(Ok)
+        .unwrap_or_else(|| Ok(&stack.ownership))?;
+    let selected_files = filter_hunks_by_ownership(&diffs, ownership)?;
 
     let message = &message_buffer;
 
@@ -846,12 +826,6 @@ pub fn commit(
         }
         None => ctx.commit(message, &tree, &[&parent_commit], None)?,
     };
-
-    if run_hooks {
-        git2_hooks::hooks_post_commit(ctx.repo(), Some(&["../.husky"]))
-            .context("failed to run hook")
-            .context(Code::CommitHookFailed)?;
-    }
 
     let vb_state = ctx.project().virtual_branches();
     branch.set_stack_head(ctx, commit_oid, Some(tree_oid))?;

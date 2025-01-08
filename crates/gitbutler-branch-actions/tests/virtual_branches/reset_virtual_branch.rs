@@ -27,7 +27,7 @@ fn to_head() {
 
         // commit changes
         let oid =
-            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None, false)
+            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None)
                 .unwrap();
 
         let list_result = gitbutler_branch_actions::list_virtual_branches(project).unwrap();
@@ -86,7 +86,7 @@ fn to_target() {
 
         // commit changes
         let oid =
-            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None, false)
+            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None)
                 .unwrap();
 
         let list_result = gitbutler_branch_actions::list_virtual_branches(project).unwrap();
@@ -144,7 +144,7 @@ fn to_commit() {
         fs::write(repository.path().join("file.txt"), "content").unwrap();
 
         let oid =
-            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None, false)
+            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None)
                 .unwrap();
 
         let list_result = gitbutler_branch_actions::list_virtual_branches(project).unwrap();
@@ -167,7 +167,7 @@ fn to_commit() {
         fs::write(repository.path().join("file.txt"), "more content").unwrap();
 
         let second_commit_oid =
-            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None, false)
+            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None)
                 .unwrap();
 
         let list_result = gitbutler_branch_actions::list_virtual_branches(project).unwrap();
@@ -235,7 +235,7 @@ fn to_non_existing() {
 
         // commit changes
         let oid =
-            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None, false)
+            gitbutler_branch_actions::create_commit(project, branch1_id, "commit", None)
                 .unwrap();
 
         let list_result = gitbutler_branch_actions::list_virtual_branches(project).unwrap();
