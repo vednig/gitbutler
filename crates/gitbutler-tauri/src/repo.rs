@@ -1,10 +1,14 @@
 pub mod commands {
     use crate::error::{Error, UnmarkedError};
-    use anyhow::Result;
+    use anyhow::{Context, Result};
+    use gitbutler_branch_actions::ownership::filter_hunks_by_ownership;
     use gitbutler_branch_actions::RemoteBranchFile;
+    use gitbutler_command_context::CommandContext;
     use gitbutler_project as projects;
     use gitbutler_project::ProjectId;
-    use gitbutler_repo::{FileInfo, RepoCommands};
+    use gitbutler_repo::hooks::HookResult;
+    use gitbutler_repo::{hooks, staging, FileInfo, RepoCommands};
+    use gitbutler_stack::BranchOwnershipClaims;
     use std::path::Path;
     use std::sync::atomic::AtomicBool;
     use tauri::State;
@@ -91,5 +95,53 @@ pub mod commands {
     ) -> Result<FileInfo, Error> {
         let project = projects.get(project_id)?;
         Ok(project.read_file_from_workspace(relative_path)?)
+    }
+
+    #[tauri::command(async)]
+    #[instrument(skip(projects))]
+    pub fn pre_commit_hook(
+        projects: State<'_, projects::Controller>,
+        project_id: ProjectId,
+        ownership: BranchOwnershipClaims,
+    ) -> Result<HookResult, Error> {
+        let project = projects.get(project_id)?;
+        let ctx = CommandContext::open(&project)?;
+        let repo = ctx.repo();
+        let diffs = gitbutler_diff::workdir(
+            ctx.repo(),
+            repo.head()
+                .context("no head")?
+                .peel_to_commit()
+                .context("no commit")?
+                .id(),
+        )?;
+        let selected_files = filter_hunks_by_ownership(&diffs, &ownership)?;
+        staging::stage_files(&ctx, &selected_files)?;
+        let result = hooks::pre_commit(&ctx);
+        staging::unstage_all(&ctx)?;
+        Ok(result?)
+    }
+
+    #[tauri::command(async)]
+    #[instrument(skip(projects))]
+    pub fn post_commit_hook(
+        projects: State<'_, projects::Controller>,
+        project_id: ProjectId,
+    ) -> Result<HookResult, Error> {
+        let project = projects.get(project_id)?;
+        let ctx = CommandContext::open(&project)?;
+        Ok(hooks::post_commit(&ctx)?)
+    }
+
+    #[tauri::command(async)]
+    #[instrument(skip(projects))]
+    pub fn message_hook(
+        projects: State<'_, projects::Controller>,
+        project_id: ProjectId,
+        message: String,
+    ) -> Result<HookResult, Error> {
+        let project = projects.get(project_id)?;
+        let ctx = CommandContext::open(&project)?;
+        Ok(hooks::message(&ctx, message)?)
     }
 }

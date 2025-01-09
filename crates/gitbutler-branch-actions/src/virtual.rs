@@ -5,6 +5,7 @@ use crate::{
     file::VirtualBranchFile,
     hunk::VirtualBranchHunk,
     integration::get_workspace_head,
+    ownership::filter_hunks_by_ownership,
     remote::branch_to_remote_branch,
     stack::stack_series,
     status::{get_applied_status, get_applied_status_cached},
@@ -12,7 +13,6 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bstr::{BString, ByteSlice};
-use git2_hooks::HookResult;
 use gitbutler_branch::BranchUpdateRequest;
 use gitbutler_branch::{dedup, dedup_fmt};
 use gitbutler_cherry_pick::RepositoryExt as _;
@@ -40,7 +40,6 @@ use gitbutler_stack::{
 use gitbutler_time::time::now_since_unix_epoch_ms;
 use itertools::Itertools;
 use serde::Serialize;
-use std::borrow::Cow;
 use std::{collections::HashMap, path::PathBuf, vec};
 use tracing::instrument;
 
@@ -731,79 +730,25 @@ pub fn commit(
     message: &str,
     ownership: Option<&BranchOwnershipClaims>,
 ) -> Result<git2::Oid> {
-    let mut message_buffer = message.to_owned();
-
-    fn join_output<'a>(stdout: &'a str, stderr: &'a str) -> Cow<'a, str> {
-        let stdout = stdout.trim();
-        if stdout.is_empty() {
-            stderr.trim().into()
-        } else {
-            stdout.into()
-        }
-    }
-
     let mut stack = ctx.project().virtual_branches().get_stack(stack_id)?;
     let ownership = ownership
         .map::<Result<&BranchOwnershipClaims>, _>(Ok)
         .unwrap_or_else(|| Ok(&stack.ownership))?;
-    let selected_files = filter_hunks_by_ownership(&diffs, ownership)?;
 
-    let message = &message_buffer;
-
-    // get the files to commit
     let diffs = gitbutler_diff::workdir(ctx.repo(), get_workspace_head(ctx)?)?;
-    let statuses = get_applied_status_cached(ctx, None, &diffs)
-        .context("failed to get status by branch")?
-        .branches;
-
-    let (ref mut branch, files) = statuses
-        .into_iter()
-        .find(|(stack, _)| stack.id == stack_id)
-        .with_context(|| format!("stack {stack_id} not found"))?;
+    let selected_files = filter_hunks_by_ownership(&diffs, ownership)?;
 
     update_conflict_markers(ctx, &diffs).context(Code::CommitMergeConflictFailure)?;
 
     ctx.assure_unconflicted()
         .context(Code::CommitMergeConflictFailure)?;
 
-    let tree_oid = if let Some(ownership) = ownership {
-        let files = files.into_iter().filter_map(|file| {
-            let hunks = file
-                .hunks
-                .into_iter()
-                .filter(|hunk| {
-                    let hunk: GitHunk = hunk.clone().into();
-                    ownership
-                        .claims
-                        .iter()
-                        .find(|f| f.file_path.eq(&file.path))
-                        .map_or(false, |f| {
-                            f.hunks.iter().any(|h| {
-                                h.start == hunk.new_start
-                                    && h.end == hunk.new_start + hunk.new_lines
-                            })
-                        })
-                })
-                .collect::<Vec<_>>();
-            if hunks.is_empty() {
-                None
-            } else {
-                Some((file.path, hunks))
-            }
-        });
-        gitbutler_diff::write::hunks_onto_commit(ctx, branch.head(), files)?
-    } else {
-        let files = files
-            .into_iter()
-            .map(|file| (file.path, file.hunks))
-            .collect::<Vec<(PathBuf, Vec<VirtualBranchHunk>)>>();
-        gitbutler_diff::write::hunks_onto_commit(ctx, branch.head(), files)?
-    };
-
     let git_repository = ctx.repo();
     let parent_commit = git_repository
-        .find_commit(branch.head())
-        .context(format!("failed to find commit {:?}", branch.head()))?;
+        .find_commit(stack.head())
+        .context(format!("failed to find commit {:?}", stack.head()))?;
+
+    let tree_oid = gitbutler_diff::write::hunks_onto_commit(ctx, stack.head(), selected_files)?;
     let tree = git_repository
         .find_tree(tree_oid)
         .context(format!("failed to find tree {:?}", tree_oid))?;
@@ -828,7 +773,7 @@ pub fn commit(
     };
 
     let vb_state = ctx.project().virtual_branches();
-    branch.set_stack_head(ctx, commit_oid, Some(tree_oid))?;
+    stack.set_stack_head(ctx, commit_oid, Some(tree_oid))?;
 
     crate::integration::update_workspace_commit(&vb_state, ctx)
         .context("failed to update gitbutler workspace")?;

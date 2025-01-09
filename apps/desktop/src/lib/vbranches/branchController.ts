@@ -52,32 +52,14 @@ export class BranchController {
 		}
 	}
 
-	async runHooks(stackId: string, ownership: string) {
-		await invoke<void>('run_hooks', {
+	async commit(branchId: string, message: string, ownership: string | undefined = undefined) {
+		await invoke<void>('commit_virtual_branch', {
 			projectId: this.projectId,
-			stackId,
+			branch: branchId,
+			message,
 			ownership
 		});
-	}
-
-	async commitBranch(branchId: string, message: string, ownership: string | undefined = undefined) {
-		try {
-			await invoke<void>('commit_virtual_branch', {
-				projectId: this.projectId,
-				branch: branchId,
-				message,
-				ownership
-			});
-			this.posthog.capture('Commit Successful');
-		} catch (err: any) {
-			if (err.code === 'errors.commit.signing_failed') {
-				showSignError(err);
-			} else {
-				showError('Failed to commit changes', err);
-				throw err;
-			}
-			this.posthog.capture('Commit Failed', err);
-		}
+		this.posthog.capture('Commit Successful');
 	}
 
 	async integrateUpstreamForSeries(

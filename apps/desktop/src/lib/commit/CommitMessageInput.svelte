@@ -9,6 +9,7 @@
 		projectCommitGenerationExtraConcise,
 		projectCommitGenerationUseEmojis
 	} from '$lib/config/config';
+	import { HooksService } from '$lib/hooks/hooksService';
 	import { showError } from '$lib/notifications/toasts';
 	import { isFailure } from '$lib/result';
 	import DropDownButton from '$lib/shared/DropDownButton.svelte';
@@ -47,12 +48,14 @@
 	const stack = getContextStore(BranchStack);
 	const project = getContext(Project);
 	const promptService = getContext(PromptService);
+	const hooksService = getContext(HooksService);
 
 	const aiGenEnabled = projectAiGenEnabled(project.id);
 	const commitGenerationExtraConcise = projectCommitGenerationExtraConcise(project.id);
 	const commitGenerationUseEmojis = projectCommitGenerationUseEmojis(project.id);
 
 	let aiLoading = $state(false);
+	let hookRunning = $state(false);
 	let aiConfigurationValid = $state(false);
 
 	let titleTextArea: HTMLTextAreaElement | undefined = $state();
@@ -132,6 +135,22 @@
 		}
 
 		aiLoading = false;
+	}
+
+	async function runMessageHook() {
+		hookRunning = true;
+		try {
+			const hook_result = await hooksService.message(project.id, commitMessage);
+			if (hook_result.status === 'message') {
+				commitMessage = hook_result.message;
+			} else if (hook_result.status === 'failure') {
+				showError('Message hook failed', hook_result.error);
+			}
+		} catch (err: unknown) {
+			showError('Message hook failed', err);
+		} finally {
+			hookRunning = false;
+		}
 	}
 
 	onMount(async () => {
@@ -237,6 +256,7 @@
 			}}
 			onblur={() => {
 				isTitleFocused = false;
+				runMessageHook();
 			}}
 			oninput={(e: Event & { currentTarget: EventTarget & HTMLTextAreaElement }) => {
 				const target = e.currentTarget;
@@ -263,6 +283,7 @@
 				}}
 				onblur={() => {
 					isDescriptionFocused = false;
+					runMessageHook();
 				}}
 				oninput={(e: Event & { currentTarget: EventTarget & HTMLTextAreaElement }) => {
 					const target = e.currentTarget;
