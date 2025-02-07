@@ -120,6 +120,7 @@
 
 <style>
 	.placeholder {
+		flex: 1;
 		position: relative;
 		height: 100%;
 		display: flex;
