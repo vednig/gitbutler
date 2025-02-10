@@ -1,8 +1,14 @@
+<script lang="ts" module>
+	import LineSelection, { type LineSelectionParams } from '$lib/hunkDiff/lineSelection.svelte';
+	export type LineClickParams = LineSelectionParams;
+</script>
+
 <script lang="ts">
 	import {
 		CountColumnSide,
 		generateRows,
 		getHunkLineInfo,
+		type LineSelector,
 		parseHunk,
 		parserFromFilename,
 		type Row,
@@ -17,6 +23,8 @@
 		diffLigatures?: boolean;
 		inlineUnifiedDiffs?: boolean;
 		diffContrast?: 'light' | 'medium' | 'strong';
+		selectedLines?: LineSelector[];
+		onLineClick?: (params: LineSelectionParams) => void;
 	}
 
 	const {
@@ -27,7 +35,9 @@
 		diffFont,
 		diffLigatures = true,
 		diffContrast = 'medium',
-		inlineUnifiedDiffs = false
+		inlineUnifiedDiffs = false,
+		selectedLines,
+		onLineClick
 	}: Props = $props();
 
 	const BORDER_WIDTH = 1;
@@ -39,7 +49,13 @@
 	const hunk = $derived(parseHunk(hunkStr));
 	const hunkLineInfo = $derived(getHunkLineInfo(hunk.contentSections));
 	const parser = $derived(parserFromFilename(filePath));
-	const renderRows = $derived(generateRows(hunk.contentSections, inlineUnifiedDiffs, parser));
+	const renderRows = $derived(
+		generateRows(hunk.contentSections, inlineUnifiedDiffs, parser, selectedLines)
+	);
+
+	const lineSelection = $derived(new LineSelection(onLineClick));
+
+	$effect(() => lineSelection.setRows(renderRows));
 </script>
 
 {#snippet countColumn(row: Row, side: CountColumnSide)}
@@ -48,6 +64,8 @@
 		data-no-drag
 		class:diff-line-deletion={row.type === SectionType.RemovedLines}
 		class:diff-line-addition={row.type === SectionType.AddedLines}
+		class:selected={row.isSelected}
+		class:clickable={onLineClick}
 		align="center"
 		class:is-last={row.isLast}
 		class:is-before={side === CountColumnSide.Before}
@@ -85,8 +103,13 @@
 		</thead>
 
 		<tbody>
-			{#each renderRows as row}
-				<tr data-no-drag>
+			{#each renderRows as row, idx}
+				<tr
+					data-no-drag
+					onmousedown={(ev) => lineSelection.onStart(ev, row, idx)}
+					onmouseenter={(ev) => lineSelection.onMoveOver(ev, row, idx)}
+					onmouseup={() => lineSelection.onEnd()}
+				>
 					{@render countColumn(row, CountColumnSide.Before)}
 					{@render countColumn(row, CountColumnSide.After)}
 					<td
@@ -96,6 +119,7 @@
 						data-no-drag
 						class:diff-line-deletion={row.type === SectionType.RemovedLines}
 						class:diff-line-addition={row.type === SectionType.AddedLines}
+						class:selected={row.isSelected}
 						class:is-last={row.isLast}
 					>
 						{@html row.tokens.join('')}
@@ -276,6 +300,10 @@
 		&.is-before.is-last {
 			border-bottom-left-radius: var(--radius-s);
 		}
+
+		&.clickable {
+			cursor: pointer;
+		}
 	}
 
 	.table__numberColumn:first-of-type {
@@ -302,6 +330,11 @@
 		cursor: text;
 		text-wrap: var(--wrap);
 		border-left: 1px solid var(--clr-border-2);
+
+		&.selected {
+			/* box-sizing: border-box;
+			border: 1px solid aqua; */
+		}
 	}
 
 	/* DIFF LINE */
