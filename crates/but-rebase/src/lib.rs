@@ -6,7 +6,7 @@ use bstr::{BString, ByteSlice};
 use gitbutler_oxidize::{ObjectIdExt, OidExt};
 use gitbutler_repo::rebase::{cherry_rebase_group, merge_commits};
 
-///
+/// Utilities to create commits (and deal with signing)
 pub mod commit;
 
 /// An instruction for [`RebaseBuilder::rebase()`].
@@ -93,11 +93,11 @@ impl RebaseBuilder {
     /// Performs a rebase on top of a given base, according to the provided steps, or fails if no step was provided.
     /// It does not actually create new git references nor does it update existing ones, it only deals with
     /// altering commits and providing the information needed to update refs.
-    pub fn rebase(self) -> Result<RebaseOutput> {
+    pub fn rebase(&mut self) -> Result<RebaseOutput> {
         if self.steps.is_empty() {
             return Err(anyhow!("No rebase steps provided"));
         }
-        rebase(&self.repo, self.base, self.steps)
+        rebase(&self.repo, self.base, std::mem::take(&mut self.steps))
     }
 }
 
@@ -173,9 +173,7 @@ fn rebase(
 ) -> Result<RebaseOutput> {
     let git2_repo = git2::Repository::open(repo.path())?;
     let mut references = vec![];
-    // Start with the base commit
     let (mut cursor, mut last_seen_commit) = (base, base);
-    // Running cherry_rebase_group for each step individually
     for step in steps {
         match step {
             RebaseStep::Pick {
@@ -189,7 +187,6 @@ fn rebase(
                 if let Some(new_message) = new_message {
                     new_commit = reword_commit(repo, new_commit, new_message.clone())?;
                 }
-                // Update the base for the next loop iteration
                 cursor = new_commit;
             }
             RebaseStep::Merge {
@@ -204,10 +201,7 @@ fn rebase(
                 new_message,
             } => {
                 last_seen_commit = commit_id;
-                // This time, the base is the parent of the last commit
                 let base_commit = repo.find_commit(cursor)?;
-
-                // First cherry-pick the target oid on top of base_commit
                 let new_commit = cherry_rebase_group(
                     &git2_repo,
                     cursor.to_git2(),
@@ -253,6 +247,7 @@ fn reword_commit(
 
 /// A reference that is an output of a rebase operation.
 /// This is simply a marker for where the actual reference should point to after the rebase operation.
+#[derive(Debug, Clone)]
 pub struct ReferenceSpec {
     /// A literal reference, useful only to the caller.
     pub refname: BString,
@@ -264,6 +259,7 @@ pub struct ReferenceSpec {
 }
 
 /// The output of the [rebase](RebaseBuilder::rebase()) operation.
+#[derive(Debug, Clone)]
 pub struct RebaseOutput {
     /// The id of the most recently created commit in the rebase operation.
     pub top_commit: gix::ObjectId,

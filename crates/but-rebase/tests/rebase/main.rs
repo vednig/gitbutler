@@ -1,4 +1,4 @@
-use crate::utils::four_commits;
+use crate::utils::{assure_stable_env, four_commits_writable};
 use anyhow::Result;
 use but_rebase::{RebaseBuilder, RebaseStep};
 
@@ -352,26 +352,49 @@ mod error_handling {
 }
 
 #[test]
-fn happy_case_scenario() -> Result<()> {
-    let (repo, commits) = four_commits()?;
+fn single_stack_journey() -> Result<()> {
+    // TODO: make implement cherry-rebase in `gitoxide` to be able to use in-memory repos.
+    assure_stable_env();
+    let (repo, commits, _tmp) = four_commits_writable()?;
     let mut builder = RebaseBuilder::new(repo, commits.base)?;
-    builder
+    let out = builder
         .step(RebaseStep::Pick {
             commit_id: commits.a,
-            new_message: Some("updated commit message".into()),
+            new_message: Some("first step: pick a".into()),
         })?
         .step(RebaseStep::Fixup {
             commit_id: commits.b,
-            new_message: None,
+            new_message: Some("second step: squash b into a".into()),
         })?
         .step(RebaseStep::Reference {
-            name: "my/ref".into(),
+            name: "anchor".into(),
         })?
         .step(RebaseStep::Merge {
             commit_id: commits.c,
-            new_message: "merge commit".into(),
-        })?;
-    // TODO: make assertions
+            new_message: "third step: merge C into b".into(),
+        })?
+        .rebase()?;
+    // TODO: get git-log output with just the right amount of info into insta (could use stable hashes)
+    // M─┐ third step: merge C into b
+    // │ o [main] c
+    // │ o b
+    // │ o a
+    // o │ second step: squash b into a
+    // I─┘ base
+    dbg!(_tmp.into_path());
+    insta::assert_debug_snapshot!(out, @r#"
+    RebaseOutput {
+        top_commit: Sha1(2e89cda20aa24cf27d947ade0858df7aab48cdf6),
+        references: [
+            ReferenceSpec {
+                refname: "anchor",
+                commit_id: Sha1(caf2eb225788ceb3f3ad8fd9866af40719a88dac),
+                previous_commit_id: Sha1(a96434e2505c2ea0896cf4f58fec0778e074d3da),
+            },
+        ],
+    }
+    "#);
+    // TODO: make more assertions on each commit
     Ok(())
 }
 
@@ -417,5 +440,47 @@ pub mod utils {
                 c: commits[0],
             },
         ))
+    }
+
+    /// TODO: remove the need for this, impl everything in `gitoxide`.
+    pub fn four_commits_writable() -> Result<(gix::Repository, Commits, tempfile::TempDir)> {
+        let tmp = gix_testtools::scripted_fixture_writable("rebase.sh")
+            .map_err(anyhow::Error::from_boxed)?;
+        let worktree_root = tmp.path().join("four-commits");
+        let repo = gix::open_opts(worktree_root, gix::open::Options::isolated())?;
+        let commits: Vec<_> = repo
+            .head_id()?
+            .ancestors()
+            .all()?
+            .map(Result::unwrap)
+            .map(|info| info.id)
+            .collect();
+        assert_eq!(commits.len(), 4, "expecting a particular graph");
+        Ok((
+            repo,
+            Commits {
+                base: commits[3],
+                a: commits[2],
+                b: commits[1],
+                c: commits[0],
+            },
+            tmp,
+        ))
+    }
+
+    /// Sets and environment that assures commits are reproducible.
+    /// This needs the `testing` feature enabled in `but-core` as well to work.
+    /// This changes the process environment, be aware.
+    pub fn assure_stable_env() {
+        let env = gix_testtools::Env::new()
+            .set("GIT_AUTHOR_DATE", "2000-01-01 00:00:00 +0000")
+            .set("GIT_AUTHOR_EMAIL", "author@example.com")
+            .set("GIT_AUTHOR_NAME", "author")
+            .set("GIT_COMMITTER_DATE", "2000-01-02 00:00:00 +0000")
+            .set("GIT_COMMITTER_EMAIL", "committer@example.com")
+            .set("GIT_COMMITTER_NAME", "committer")
+            .set("CHANGE_ID", "committer");
+        // assure it doesn't get racy.
+        std::mem::forget(env);
     }
 }
