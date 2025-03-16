@@ -53,7 +53,10 @@ jobs:
       - name: install frontend dependencies
         shell: bash
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
-        run: pnpm install 
+        run: |
+         pnpm install 
+         pnpm tauri build --features devtools --config crates/gitbutler-tauri/tauri.conf.nightly.json
+
          
 
       - uses: tauri-apps/tauri-action@v0
