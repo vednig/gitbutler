@@ -36,6 +36,9 @@ jobs:
       - name: Install PNPM
         shell: bash
         run: curl -fsSL https://get.pnpm.io/install.sh | sh -
+        env:
+          SHELL: bash 
+        
         
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable # Set this to dtolnay/rust-toolchain@nightly
