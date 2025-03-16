@@ -55,7 +55,7 @@ jobs:
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
         run: |
          pnpm install 
-         pnpm tauri build --features devtools --config crates/gitbutler-tauri/tauri.conf.nightly.json
+         pnpm tauri dev:desktop
 
          
 
