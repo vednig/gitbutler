@@ -32,8 +32,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          cache: 'pnpm' # Set this to npm, yarn or pnpm.
 
+      - name: Install PNPM
+        run: curl -fsSL https://get.pnpm.io/install.sh | sh -
+        
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable # Set this to dtolnay/rust-toolchain@nightly
         with:
@@ -45,8 +47,6 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install PNPM
-        run: curl -fsSL https://get.pnpm.io/install.sh | sh -
 
       - name: install frontend dependencies
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
