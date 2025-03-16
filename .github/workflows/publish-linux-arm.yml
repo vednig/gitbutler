@@ -45,6 +45,9 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Install PNPM
+        run: curl -fsSL https://get.pnpm.io/install.sh | sh -
+
       - name: install frontend dependencies
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
         run: pnpm install # change this to npm or pnpm depending on which one you use.
