@@ -36,7 +36,7 @@ jobs:
       - name: Install PNPM
         shell: bash
         run: |
-         curl -fsSL https://get.pnpm.io/install.sh | sh - \
+         curl -fsSL https://get.pnpm.io/install.sh | sh -
          source /home/runner/.bashrc
         env:
           SHELL: bash 
