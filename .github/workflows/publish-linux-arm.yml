@@ -55,6 +55,7 @@ jobs:
 
 
       - name: install frontend dependencies
+        shell: bash
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
         run: |
          source /home/runner/.bashrc
