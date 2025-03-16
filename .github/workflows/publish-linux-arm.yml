@@ -33,13 +33,9 @@ jobs:
         with:
           node-version: lts/*
 
-      - name: Install PNPM
-        shell: bash
-        run: |
-         curl -fsSL https://get.pnpm.io/install.sh | sh -
-         source /home/runner/.bashrc
-        env:
-          SHELL: bash 
+      - name: Install PNPM 
+        uses: pnpm/action-setup@v4.1.0
+        
         
         
       - name: install Rust stable
@@ -57,9 +53,7 @@ jobs:
       - name: install frontend dependencies
         shell: bash
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
-        run: |
-         source /home/runner/.bashrc
-         pnpm install 
+        run: pnpm install 
          
 
       - uses: tauri-apps/tauri-action@v0
