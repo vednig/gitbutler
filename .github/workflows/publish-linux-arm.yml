@@ -34,6 +34,7 @@ jobs:
           node-version: lts/*
 
       - name: Install PNPM
+        shell: bash
         run: curl -fsSL https://get.pnpm.io/install.sh | sh -
         
       - name: install Rust stable
