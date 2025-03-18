@@ -54,7 +54,6 @@ jobs:
         shell: bash
         # If you don't have `beforeBuildCommand` configured you may want to build your frontend here too.
         run: |
-         pnpm exec turbo telemetry disable
          pnpm install 
          cargo build
          pnpm dev:desktop
