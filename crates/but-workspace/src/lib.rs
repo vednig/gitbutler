@@ -43,6 +43,8 @@ mod author;
 mod integrated;
 
 pub mod commit_engine;
+pub mod discard;
+pub use discard::function::discard_workspace_changes;
 
 /// 🚧utilities for applying and unapplying branches 🚧.
 pub mod branch;
@@ -134,6 +136,86 @@ pub fn stacks(gb_dir: &Path) -> Result<Vec<StackEntry>> {
             tip: stack.head().to_gix(),
         })
         .collect())
+}
+
+/// Information about the current state of a stack
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackInfo {
+    /// The ID of the stack.
+    pub id: StackId,
+    /// Stack name.
+    pub name: BString,
+    /// Whether the stack contains any conflicted changes.
+    pub is_conflicted: bool,
+    /// Whether there are local changes that can be pushed to the remote.
+    pub is_dirty: bool,
+    /// Whether the stack requires a force push to the remote.
+    pub requires_force: bool,
+}
+
+fn is_requires_force(ctx: &CommandContext, stack: &Stack) -> Result<bool> {
+    let upstream = if let Some(upstream) = &stack.upstream {
+        upstream
+    } else {
+        return Ok(false);
+    };
+
+    let reference = match ctx.repo().refname_to_id(&upstream.to_string()) {
+        Ok(reference) => reference,
+        Err(err) if err.code() == git2::ErrorCode::NotFound => return Ok(false),
+        Err(other) => return Err(other).context("failed to find upstream reference"),
+    };
+
+    let upstream_commit = ctx
+        .repo()
+        .find_commit(reference)
+        .context("failed to find upstream commit")?;
+
+    let merge_base = ctx.repo().merge_base(upstream_commit.id(), stack.head())?;
+
+    Ok(merge_base != upstream_commit.id())
+}
+
+/// Returns information about the current state of a stack.
+/// If the stack is not found, an error is returned.
+///
+/// - `gb_dir`: The path to the GitButler state for the project. Normally this is `.git/gitbutler` in the project's repository.
+/// - `stack_id`: The ID of the stack to get information about.
+/// - `ctx`: The command context for the project.
+pub fn get_stack_info(gb_dir: &Path, stack_id: StackId, ctx: &CommandContext) -> Result<StackInfo> {
+    let state = state_handle(gb_dir);
+    let stack = state.get_stack(stack_id)?;
+    let branches = stack.branches();
+    let repo = ctx.gix_repository()?;
+
+    let mut is_conflicted = false;
+    let mut is_dirty = false;
+
+    for branch in branches {
+        if is_conflicted && is_dirty {
+            break;
+        }
+        let commits = local_and_remote_commits(ctx, &repo, branch, &stack)?;
+        for commit in commits {
+            if !is_conflicted && commit.has_conflicts {
+                is_conflicted = true;
+            }
+            if !is_dirty && matches!(commit.state, CommitState::LocalOnly) {
+                is_dirty = true;
+            }
+        }
+    }
+
+    let requires_force = is_requires_force(ctx, &stack)?;
+
+    Ok(StackInfo {
+        id: stack.id,
+        name: stack.name.to_owned().into(),
+        is_conflicted,
+        is_dirty,
+        requires_force,
+    })
 }
 
 /// Returns the last-seen fork-point that the workspace has with the target branch with which it wants to integrate.
@@ -249,7 +331,7 @@ pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<Bran
         .push_remote_name();
 
     let mut stack_branches = vec![];
-    let stack = state.get_stack(Id::from_str(&stack_id)?)?;
+    let mut stack = state.get_stack(Id::from_str(&stack_id)?)?;
     let stack_ctx = ctx.to_stack_context()?;
     let mut current_base = stack.merge_base(&stack_ctx)?.to_gix();
     for internal in stack.branches() {
@@ -270,6 +352,7 @@ pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<Bran
         current_base = internal.head_oid(&stack_ctx, &stack)?.to_gix();
         stack_branches.push(result);
     }
+    _ = stack.migrate_change_ids(ctx); // If it fails thats ok - best effort migration
     stack_branches.reverse();
     Ok(stack_branches)
 }
