@@ -5,37 +5,73 @@
 	import { inject } from '@gitbutler/shared/context';
 	import Badge from '@gitbutler/ui/Badge.svelte';
 
-	interface Props {
+	interface BaseProps {
+		type: 'commit' | 'branch';
 		projectId: string;
+	}
+
+	interface CommitProps extends BaseProps {
+		type: 'commit';
 		commitId: string;
 	}
 
-	const { projectId, commitId }: Props = $props();
+	interface BranchProps extends BaseProps {
+		type: 'branch';
+		stackId: string;
+		branchName: string;
+	}
+
+	type Props = CommitProps | BranchProps;
+
+	const props: Props = $props();
 	const [stackService] = inject(StackService);
-	const changesResult = $derived(stackService.commitChanges(projectId, commitId));
+	const commitChangesResult = $derived(
+		props.type === 'commit'
+			? stackService.commitChanges(props.projectId, props.commitId)
+			: undefined
+	);
+	const branchChangesResult = $derived(
+		props.type === 'branch'
+			? stackService.branchChanges(props.projectId, props.stackId, props.branchName)
+			: undefined
+	);
+
+	const changesResult = $derived(commitChangesResult?.current ?? branchChangesResult?.current);
+	const headerTitle = $derived.by(() => {
+		switch (props.type) {
+			case 'commit':
+				return 'Changed files';
+			case 'branch':
+				return 'All changed files';
+		}
+	});
 </script>
 
-<div class="changed-files">
-	<ReduxResult result={changesResult.current}>
-		{#snippet children(changes)}
-			<div class="header text-13 text-bold">
-				<span>Changed files</span>
-				<Badge>{changes.length}</Badge>
-			</div>
-			{#if changes.length > 0}
-				<FileList {projectId} {changes} {commitId} />
-			{:else}
-				<div class="text-12 text-body helper-text">(no changed files)</div>
-			{/if}
-		{/snippet}
-	</ReduxResult>
-</div>
+{#if changesResult}
+	<div class="changed-files">
+		<ReduxResult result={changesResult}>
+			{#snippet children(changes)}
+				<div class="header text-13 text-bold">
+					<span>{headerTitle}</span>
+					<Badge>{changes.length}</Badge>
+				</div>
+				{#if changes.length > 0}
+					<FileList {changes} {...props} />
+				{:else}
+					<div class="text-12 text-body helper-text">(no changed files)</div>
+				{/if}
+			{/snippet}
+		</ReduxResult>
+	</div>
+{:else}
+	<p class="text-13 text-bold">Malformed props</p>
+{/if}
 
 <style>
 	.changed-files {
 		display: flex;
 		flex-direction: column;
-		border-radius: var(--radius-l);
+		border-radius: var(--radius-m);
 		border: 1px solid var(--clr-border-2);
 		overflow: hidden;
 	}

@@ -1,16 +1,15 @@
 <script lang="ts">
-	import BranchDividerLine from './BranchDividerLine.svelte';
-	import CommitGoesHere from './CommitGoesHere.svelte';
-	import CommitRow from './CommitRow.svelte';
-	import CreateReviewButton, { Action } from './CreateReviewButton.svelte';
-	import EmptyBranch from './EmptyBranch.svelte';
-	import NewBranchModal from './NewBranchModal.svelte';
 	import ReduxResult from '$components/ReduxResult.svelte';
 	import SeriesHeaderContextMenu from '$components/SeriesHeaderContextMenu.svelte';
 	import BranchCommitList from '$components/v3/BranchCommitList.svelte';
+	import BranchDividerLine from '$components/v3/BranchDividerLine.svelte';
 	import BranchHeader from '$components/v3/BranchHeader.svelte';
+	import CommitGoesHere from '$components/v3/CommitGoesHere.svelte';
+	import CommitRow from '$components/v3/CommitRow.svelte';
+	import EmptyBranch from '$components/v3/EmptyBranch.svelte';
+	import NewBranchModal from '$components/v3/NewBranchModal.svelte';
 	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { combineResults } from '$lib/state/helpers';
 	import { UiState } from '$lib/state/uiState.svelte';
@@ -30,10 +29,11 @@
 
 	let { projectId, stackId, branchName, first, last: lastBranch }: Props = $props();
 
-	const [stackService, baseBranchService, uiState] = inject(
+	const [stackService, baseBranchService, uiState, forge] = inject(
 		StackService,
 		BaseBranchService,
-		UiState
+		UiState,
+		DefaultForgeFactory
 	);
 
 	const branchResult = $derived(stackService.branchByName(projectId, stackId, branchName));
@@ -47,8 +47,7 @@
 	const selection = $derived(uiState.stack(stackId).selection.get());
 	const selectedCommitId = $derived(selection.current?.commitId);
 
-	const forge = getForge();
-	const forgeBranch = $derived($forge?.branch(branchName));
+	const forgeBranch = $derived(forge.current?.branch(branchName));
 
 	let headerContextMenu = $state<ReturnType<typeof SeriesHeaderContextMenu>>();
 	let kebabContextMenu = $state<ReturnType<typeof ContextMenu>>();
@@ -153,32 +152,18 @@
 						{hasParent}
 					/>
 				{/snippet}
-				{#snippet actions()}
-					{#if commit}
-						<CreateReviewButton
-							onclick={(action) => {
-								if (action === Action.CreateButlerReview) {
-									uiState.project(projectId).drawerPage.set('br');
-								} else if (action === Action.CreatePullRequest) {
-									uiState.project(projectId).drawerPage.set('pr');
-								}
-							}}
-						/>
-					{/if}
-				{/snippet}
 			</BranchHeader>
 			<BranchCommitList {projectId} {stackId} {branchName} {selectedCommitId}>
 				{#snippet emptyPlaceholder()}
 					<EmptyBranch {lastBranch} />
 				{/snippet}
-				{#snippet upstreamTemplate({ commit, commitKey, first, lastCommit, selected })}
+				{#snippet upstreamTemplate({ commit, first, lastCommit, selected })}
 					{@const commitId = commit.id}
 					{#if !isCommitting}
 						<CommitRow
 							{stackId}
 							{branchName}
 							{projectId}
-							{commitKey}
 							{first}
 							lastCommit={lastCommit && !commit}
 							{commit}
@@ -190,7 +175,7 @@
 						/>
 					{/if}
 				{/snippet}
-				{#snippet localAndRemoteTemplate({ commit, commitKey, first, last, lastCommit, selected })}
+				{#snippet localAndRemoteTemplate({ commit, first, last, lastCommit, selected })}
 					{@const commitId = commit.id}
 					{#if isCommitting}
 						<!-- Only commits to the base can be `last`, see next `CommitGoesHere`. -->
@@ -206,7 +191,6 @@
 						{stackId}
 						{branchName}
 						{projectId}
-						{commitKey}
 						{first}
 						{lastCommit}
 						{lastBranch}

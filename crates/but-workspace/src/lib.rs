@@ -31,11 +31,11 @@ use gitbutler_commit::commit_ext::CommitExt;
 use gitbutler_id::id::Id;
 use gitbutler_oxidize::{OidExt, git2_signature_to_gix_signature};
 use gitbutler_stack::stack_context::CommandContextExt;
-use gitbutler_stack::{Stack, VirtualBranchesHandle};
+use gitbutler_stack::{Stack, StackBranch, VirtualBranchesHandle};
 use integrated::IsCommitIntegrated;
 use itertools::Itertools;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -138,30 +138,87 @@ pub fn stacks(gb_dir: &Path) -> Result<Vec<StackEntry>> {
         .collect())
 }
 
+/// Represents the pushable status for the current stack.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PushStatus {
+    /// Can push, but there are no changes to be pushed
+    NothingToPush,
+    /// Can push. This is the case when there are local changes that can be pushed to the remote.
+    UnpushedCommits,
+    /// Can push, but requires a force push to the remote because commits were rewritten.
+    UnpushedCommitsRequiringForce,
+    /// Completely unpushed
+    CompletelyUnpushed,
+    /// Fully integrated, no changes to push.
+    Integrated,
+}
+
+#[derive(Debug, Default)]
+struct BranchState {
+    is_integrated: bool,
+    is_dirty: bool,
+    requires_force: bool,
+    has_pushed_commits: bool,
+}
+
+impl From<BranchState> for PushStatus {
+    fn from(state: BranchState) -> Self {
+        match (
+            state.is_integrated,
+            state.is_dirty,
+            state.requires_force,
+            state.has_pushed_commits,
+        ) {
+            (true, _, _, _) => PushStatus::Integrated,
+            (_, true, _, false) => PushStatus::CompletelyUnpushed,
+            (_, true, true, _) => PushStatus::UnpushedCommitsRequiringForce,
+            (_, true, false, true) => PushStatus::UnpushedCommits,
+            (_, false, _, _) => PushStatus::NothingToPush,
+        }
+    }
+}
+
+/// Information about the current state of a branch.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchDetails {
+    /// The name of the branch.
+    pub name: String,
+    /// The pushable status for the branch
+    pub push_status: PushStatus,
+    /// Last time the branch was updated in Epoch milliseconds.
+    pub last_updated_at: Option<u128>,
+    /// All authors of the commits in the branch.
+    pub authors: Vec<Author>,
+    /// Whether the branch is conflicted.
+    pub is_conflicted: bool,
+}
+
 /// Information about the current state of a stack
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StackInfo {
-    /// The ID of the stack.
-    pub id: StackId,
-    /// Stack name.
-    pub name: BString,
-    /// Whether the stack contains any conflicted changes.
+pub struct StackDetails {
+    /// This is the name of the top-most branch, provided by the API for convinience
+    pub derived_name: String,
+    /// The pushable status for the stack
+    pub push_status: PushStatus,
+    /// The details about the contained branches
+    pub branch_details: Vec<BranchDetails>,
+    /// Whether the stack is conflicted.
     pub is_conflicted: bool,
-    /// Whether there are local changes that can be pushed to the remote.
-    pub is_dirty: bool,
-    /// Whether the stack requires a force push to the remote.
-    pub requires_force: bool,
 }
 
-fn is_requires_force(ctx: &CommandContext, stack: &Stack) -> Result<bool> {
-    let upstream = if let Some(upstream) = &stack.upstream {
-        upstream
-    } else {
-        return Ok(false);
-    };
+/// Determines if a force push is required to push a branch to its remote.
+fn requires_force(
+    ctx: &CommandContext,
+    stack: &Stack,
+    branch: &StackBranch,
+    remote: &str,
+) -> Result<bool> {
+    let upstream = branch.remote_reference(remote);
 
-    let reference = match ctx.repo().refname_to_id(&upstream.to_string()) {
+    let reference = match ctx.repo().refname_to_id(&upstream) {
         Ok(reference) => reference,
         Err(err) if err.code() == git2::ErrorCode::NotFound => return Ok(false),
         Err(other) => return Err(other).context("failed to find upstream reference"),
@@ -172,7 +229,8 @@ fn is_requires_force(ctx: &CommandContext, stack: &Stack) -> Result<bool> {
         .find_commit(reference)
         .context("failed to find upstream commit")?;
 
-    let merge_base = ctx.repo().merge_base(upstream_commit.id(), stack.head())?;
+    let branch_head = branch.head_oid(&ctx.to_stack_context()?, stack)?;
+    let merge_base = ctx.repo().merge_base(upstream_commit.id(), branch_head)?;
 
     Ok(merge_base != upstream_commit.id())
 }
@@ -183,38 +241,69 @@ fn is_requires_force(ctx: &CommandContext, stack: &Stack) -> Result<bool> {
 /// - `gb_dir`: The path to the GitButler state for the project. Normally this is `.git/gitbutler` in the project's repository.
 /// - `stack_id`: The ID of the stack to get information about.
 /// - `ctx`: The command context for the project.
-pub fn get_stack_info(gb_dir: &Path, stack_id: StackId, ctx: &CommandContext) -> Result<StackInfo> {
+pub fn stack_info(gb_dir: &Path, stack_id: StackId, ctx: &CommandContext) -> Result<StackDetails> {
     let state = state_handle(gb_dir);
     let stack = state.get_stack(stack_id)?;
     let branches = stack.branches();
     let repo = ctx.gix_repository()?;
+    let remote = state
+        .get_default_target()
+        .context("failed to get default target")?
+        .push_remote_name();
 
-    let mut is_conflicted = false;
-    let mut is_dirty = false;
+    let mut stack_state = BranchState::default();
+    let mut stack_is_conflicted = false;
+    let mut branch_details = vec![];
 
     for branch in branches {
-        if is_conflicted && is_dirty {
-            break;
-        }
+        let mut branch_state = BranchState {
+            requires_force: requires_force(ctx, &stack, &branch, &remote)?,
+            ..Default::default()
+        };
+
+        let mut is_conflicted = false;
+        let branch_name = branch.name().to_owned();
+        let mut authors = HashSet::new();
         let commits = local_and_remote_commits(ctx, &repo, branch, &stack)?;
-        for commit in commits {
-            if !is_conflicted && commit.has_conflicts {
-                is_conflicted = true;
-            }
-            if !is_dirty && matches!(commit.state, CommitState::LocalOnly) {
-                is_dirty = true;
-            }
+
+        for commit in &commits {
+            is_conflicted |= commit.has_conflicts;
+            branch_state.is_dirty |= matches!(commit.state, CommitState::LocalOnly);
+            branch_state.has_pushed_commits |=
+                matches!(commit.state, CommitState::LocalAndRemote(_));
+            authors.insert(commit.author.clone());
         }
+
+        // We can assume that if the child-most commit is integrated, the whole branch is integrated
+        branch_state.is_integrated = matches!(
+            commits.first().map(|c| &c.state),
+            Some(CommitState::Integrated)
+        );
+
+        stack_is_conflicted |= is_conflicted;
+        stack_state.is_dirty |= branch_state.is_dirty;
+        stack_state.requires_force |= branch_state.requires_force;
+        stack_state.has_pushed_commits |= branch_state.has_pushed_commits;
+
+        // If all branches are integrated, the stack is integrated
+        stack_state.is_integrated &= branch_state.is_integrated;
+
+        branch_details.push(BranchDetails {
+            name: branch_name,
+            push_status: branch_state.into(),
+            last_updated_at: commits.first().map(|c| c.created_at),
+            authors: authors.into_iter().collect(),
+            is_conflicted,
+        });
     }
 
-    let requires_force = is_requires_force(ctx, &stack)?;
+    let push_status = stack_state.into();
 
-    Ok(StackInfo {
-        id: stack.id,
-        name: stack.name.to_owned().into(),
-        is_conflicted,
-        is_dirty,
-        requires_force,
+    Ok(StackDetails {
+        derived_name: stack.derived_name()?,
+        push_status,
+        branch_details,
+        is_conflicted: stack_is_conflicted,
     })
 }
 
@@ -352,7 +441,7 @@ pub fn stack_branches(stack_id: String, ctx: &CommandContext) -> Result<Vec<Bran
         current_base = internal.head_oid(&stack_ctx, &stack)?.to_gix();
         stack_branches.push(result);
     }
-    _ = stack.migrate_change_ids(ctx); // If it fails thats ok - best effort migration
+    stack.migrate_change_ids(ctx).ok(); // If it fails thats ok - best effort migration
     stack_branches.reverse();
     Ok(stack_branches)
 }

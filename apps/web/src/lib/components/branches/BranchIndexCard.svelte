@@ -17,11 +17,12 @@
 	type Props = {
 		uuid: string;
 		linkParams: ProjectParameters;
+		isTopEntry: boolean;
 		roundedTop: boolean;
 		roundedBottom: boolean;
 	};
 
-	const { uuid, linkParams, roundedTop, roundedBottom }: Props = $props();
+	const { uuid, linkParams, isTopEntry, roundedTop, roundedBottom }: Props = $props();
 
 	const routes = getContext(WebRoutesService);
 
@@ -46,11 +47,12 @@
 				{ key: 'status', value: branch.reviewStatus },
 				{ key: 'title', value: branch.title || '-', tooltip: branch.title },
 				{ key: 'number', value: branch.branchId.slice(0, 7), tooltip: branch.branchId },
-				{ key: 'commitGraph', value: branch },
+				{ key: 'commitGraph', value: { branch, ...linkParams } },
 				{ key: 'date', value: branch.updatedAt },
 				{ key: 'avatars', value: contributors },
 				{ key: 'number', value: branch.version || 0 }
 			]}
+			{isTopEntry}
 			separatedTop={roundedTop}
 			separatedBottom={roundedBottom}
 		/>

@@ -1,12 +1,20 @@
-import { tauriBaseQuery } from './backendQuery';
-import { butlerModule } from './butlerModule';
-import { ReduxTag } from './tags';
-import { uiStateSlice } from './uiState.svelte';
 import { changeSelectionSlice } from '$lib/selection/changeSelection.svelte';
-import { configureStore } from '@reduxjs/toolkit';
+import { tauriBaseQuery } from '$lib/state/backendQuery';
+import { butlerModule } from '$lib/state/butlerModule';
+import { ReduxTag } from '$lib/state/tags';
+import { uiStatePersistConfig, uiStateSlice } from '$lib/state/uiState.svelte';
+import { combineReducers, configureStore } from '@reduxjs/toolkit';
 import { buildCreateApi, coreModule, type RootState } from '@reduxjs/toolkit/query';
+import { FLUSH, PAUSE, PERSIST, persistReducer, PURGE, REGISTER, REHYDRATE } from 'redux-persist';
+import persistStore from 'redux-persist/lib/persistStore';
 import type { Tauri } from '$lib/backend/tauri';
-import type { HookContext } from './context';
+import type { GitHubClient } from '$lib/forge/github/githubClient';
+
+/**
+ * GitHub API object that enables the declaration and usage of endpoints
+ * colocated with the feature they support.
+ */
+export type GitHubApi = ReturnType<typeof createGitHubApi>;
 
 /**
  * A redux store with dependency injection through middleware.
@@ -23,16 +31,21 @@ export class ClientState {
 	readonly uiState = $derived(this.rootState.uiState);
 
 	/** rtk-query api for communicating with the back end. */
-	readonly backendApi: ReturnType<typeof createApi>;
+	readonly backendApi: ReturnType<typeof createBackendApi>;
 
-	constructor(readonly tauri: Tauri) {
-		this.backendApi = createApi({
+	/** rtk-query api for communicating with GitHub. */
+	readonly githubApi: ReturnType<typeof createGitHubApi>;
+
+	constructor(tauri: Tauri, github: GitHubClient) {
+		const butlerMod = butlerModule({
 			// Reactive loop without nested function.
 			// TODO: Can it be done without nesting?
 			getState: () => () => this.rootState as any as RootState<any, any, any>,
 			getDispatch: () => this.dispatch
 		});
-		this.store = createStore(tauri, this.backendApi);
+		this.githubApi = createGitHubApi(butlerMod);
+		this.backendApi = createBackendApi(butlerMod);
+		this.store = createStore(tauri, github, this.backendApi, this.githubApi);
 		this.dispatch = this.store.dispatch;
 		this.rootState = this.store.getState();
 
@@ -48,21 +61,34 @@ export class ClientState {
  * We need this function in order to declare the store type in `DesktopState`
  * and then assign the value in the constructor.
  */
-function createStore(tauri: Tauri, backend: ReturnType<typeof createApi>) {
-	return configureStore({
-		reducer: {
-			// RTK Query API for the back end.
-			[backend.reducerPath]: backend.reducer,
-			// File and hunk selection state.
-			[changeSelectionSlice.reducerPath]: changeSelectionSlice.reducer,
-			[uiStateSlice.reducerPath]: uiStateSlice.reducer
-		},
+function createStore(
+	tauri: Tauri,
+	gitHubClient: GitHubClient,
+	backendApi: ReturnType<typeof createBackendApi>,
+	githubApi: ReturnType<typeof createGitHubApi>
+) {
+	const reducer = combineReducers({
+		// RTK Query API for the back end.
+		[backendApi.reducerPath]: backendApi.reducer,
+		[githubApi.reducerPath]: githubApi.reducer,
+		// File and hunk selection state.
+		[changeSelectionSlice.reducerPath]: changeSelectionSlice.reducer,
+		[uiStateSlice.reducerPath]: persistReducer(uiStatePersistConfig, uiStateSlice.reducer)
+	});
+
+	const store = configureStore({
+		reducer: reducer,
 		middleware: (getDefaultMiddleware) => {
 			return getDefaultMiddleware({
-				thunk: { extraArgument: { tauri } }
-			}).concat(backend.middleware);
+				thunk: { extraArgument: { tauri, gitHubClient } },
+				serializableCheck: {
+					ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER]
+				}
+			}).concat(backendApi.middleware, githubApi.middleware);
 		}
 	});
+	persistStore(store);
+	return store;
 }
 
 /**
@@ -74,12 +100,26 @@ function createStore(tauri: Tauri, backend: ReturnType<typeof createApi>) {
  * Unlike with React, it isn't possible to access the Svelte context
  * during event handling.
  */
-export function createApi(ctx: HookContext) {
+export function createBackendApi(butlerMod: ReturnType<typeof butlerModule>) {
 	return buildCreateApi(
 		coreModule(),
-		butlerModule(ctx)
+		butlerMod
 	)({
 		reducerPath: 'backend',
+		tagTypes: Object.values(ReduxTag),
+		baseQuery: tauriBaseQuery,
+		endpoints: (_) => {
+			return {};
+		}
+	});
+}
+
+export function createGitHubApi(butlerMod: ReturnType<typeof butlerModule>) {
+	return buildCreateApi(
+		coreModule(),
+		butlerMod
+	)({
+		reducerPath: 'github',
 		tagTypes: Object.values(ReduxTag),
 		baseQuery: tauriBaseQuery,
 		endpoints: (_) => {

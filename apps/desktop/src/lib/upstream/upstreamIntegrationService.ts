@@ -14,7 +14,7 @@ import type {
 	IntegrationOutcome,
 	Resolution,
 	StackStatusesWithBranches
-} from './types';
+} from '$lib/upstream/types';
 import type { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
 
 export class UpstreamIntegrationService {
@@ -39,7 +39,7 @@ export class UpstreamIntegrationService {
 
 		const stackStatusesWithBranches: StackStatusesWithBranches = {
 			type: 'updatesRequired',
-			subject: branchStatuses.subject
+			subject: branchStatuses.subject.statuses
 				.map((status) => {
 					const stack = branches.find((appliedBranch) => appliedBranch.id === status[0]);
 

@@ -4,6 +4,7 @@ import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 import ts from 'typescript-eslint';
 import pluginImportX from 'eslint-plugin-import-x';
+import noRelativeImportPaths from '@gitbutler/no-relative-imports';
 
 export default ts.config(
 	js.configs.recommended,
@@ -22,6 +23,7 @@ export default ts.config(
 			}
 		},
 		rules: {
+			'no-console': ['error', { allow: ['warn', 'error'] }],
 			'@typescript-eslint/no-namespace': 'off',
 			'@typescript-eslint/no-empty-function': 'off',
 			'@typescript-eslint/no-explicit-any': 'off',
@@ -77,7 +79,8 @@ export default ts.config(
 					submit: true,
 					reset: true
 				}
-			]
+			],
+			'no-relative-import-paths/no-relative-import-paths': 'error'
 		},
 		settings: {
 			'import-x/extensions': ['.ts'],
@@ -99,7 +102,8 @@ export default ts.config(
 			}
 		},
 		plugins: {
-			'import-x': pluginImportX
+			'import-x': pluginImportX,
+			'no-relative-import-paths': noRelativeImportPaths
 		}
 	},
 	{
@@ -122,6 +126,7 @@ export default ts.config(
 			'**/node_modules',
 			'**/butler/target',
 			'**/build',
+			'**/static',
 			'**/dist',
 			'.svelte-kit',
 			'**/package',

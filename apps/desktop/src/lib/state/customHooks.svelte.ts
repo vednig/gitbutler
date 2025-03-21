@@ -7,11 +7,14 @@ import {
 	type EndpointDefinitions,
 	type MutationActionCreatorResult,
 	type MutationDefinition,
+	type QueryActionCreatorResult,
 	type ResultTypeFrom,
-	type RootState
+	type RootState,
+	type StartQueryActionCreatorOptions
 } from '@reduxjs/toolkit/query';
-import type { CustomQuery } from './butlerModule';
-import type { HookContext } from './context';
+import type { TauriCommandError } from '$lib/state/backendQuery';
+import type { CustomQuery } from '$lib/state/butlerModule';
+import type { HookContext } from '$lib/state/context';
 
 /**
  * Returns implementations for custom endpoint methods defined in `ButlerModule`.
@@ -30,12 +33,39 @@ export function buildQueryHooks<Definitions extends EndpointDefinitions>({
 
 	const { initiate, select } = endpoint as ApiEndpointQuery<CustomQuery<any>, Definitions>;
 
-	function useQuery<T extends (arg: any) => any>(queryArg: unknown, options?: { transform?: T }) {
+	async function fetch<T extends (arg: any) => any>(
+		queryArg: unknown,
+		options?: { transform?: T; forceRefetch?: boolean }
+	) {
 		const dispatch = getDispatch();
+		const result = await dispatch(
+			initiate(queryArg, {
+				subscribe: false,
+				forceRefetch: options?.forceRefetch
+			})
+		);
+		return result;
+	}
+
+	function useQuery<T extends (arg: any) => any>(
+		queryArg: unknown,
+		options?: { transform?: T } & StartQueryActionCreatorOptions
+	) {
+		const dispatch = getDispatch();
+		let subscription: QueryActionCreatorResult<any>;
 		$effect(() => {
-			const { unsubscribe } = dispatch(initiate(queryArg));
-			return unsubscribe;
+			subscription = dispatch(
+				initiate(queryArg, {
+					subscribe: options?.subscribe,
+					subscriptionOptions: options?.subscriptionOptions,
+					forceRefetch: options?.forceRefetch
+				})
+			);
+			return () => {
+				subscription.unsubscribe();
+			};
 		});
+
 		const result = $derived(useQueryState(queryArg, options));
 		return result;
 	}
@@ -51,23 +81,16 @@ export function buildQueryHooks<Definitions extends EndpointDefinitions>({
 			if (options?.transform && data) {
 				data = options.transform(data);
 			}
-			function andThen(fn: (arg: any) => any) {
-				if (data) {
-					return fn(data);
-				} else {
-					return result;
-				}
-			}
 			return {
 				...result,
-				data,
-				andThen
+				data
 			};
 		});
 		return reactive(() => output);
 	}
 
 	return {
+		fetch,
 		useQuery,
 		useQueryState
 	};
@@ -76,6 +99,7 @@ export function buildQueryHooks<Definitions extends EndpointDefinitions>({
 export type UseMutationHookParams<Definition extends MutationDefinition<any, any, string, any>> = {
 	fixedCacheKey?: string;
 	sideEffect?: (data: ResultTypeFrom<Definition>) => void;
+	onError?: (error: TauriCommandError) => void;
 };
 
 /**
@@ -98,6 +122,11 @@ export function buildMutationHooks<Definitions extends EndpointDefinitions>({
 		Definitions
 	>;
 
+	async function mutate(queryArg: unknown) {
+		const dispatch = getDispatch();
+		return await dispatch(initiate(queryArg));
+	}
+
 	/**
 	 * Use mutation hook.
 	 *
@@ -110,7 +139,7 @@ export function buildMutationHooks<Definitions extends EndpointDefinitions>({
 	function useMutation(
 		params?: UseMutationHookParams<MutationDefinition<any, any, any, any, any>>
 	) {
-		const { fixedCacheKey, sideEffect } = params || {};
+		const { fixedCacheKey, sideEffect, onError } = params || {};
 		const dispatch = getDispatch();
 
 		let promise =
@@ -119,10 +148,21 @@ export function buildMutationHooks<Definitions extends EndpointDefinitions>({
 		async function triggerMutation(queryArg: unknown) {
 			const dispatchResult = dispatch(initiate(queryArg, { fixedCacheKey }));
 			promise = dispatchResult;
-			promise.then((result) => {
-				if (result.data) sideEffect?.(result.data);
-			});
-			return await dispatchResult;
+			const result = await promise;
+
+			if (result.data) {
+				sideEffect?.(result.data);
+			}
+
+			if (result.error && !onError) {
+				throw result.error;
+			}
+
+			if (result.error && onError) {
+				onError(result.error);
+			}
+
+			return result.data;
 		}
 
 		function reset() {
@@ -148,10 +188,11 @@ export function buildMutationHooks<Definitions extends EndpointDefinitions>({
 			};
 		});
 
-		return { result: reactive(() => result), triggerMutation, reset };
+		return [triggerMutation, reactive(() => result), reset] as const;
 	}
 
 	return {
+		mutate,
 		useMutation
 	};
 }

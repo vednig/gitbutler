@@ -1,7 +1,6 @@
-import { BitBucketBranch } from './bitbucketBranch';
-import type { RepoInfo } from '$lib/url/gitUrl';
-import type { Forge, ForgeName } from '../interface/forge';
-import type { DetailedPullRequest, ForgeArguments } from '../interface/types';
+import { BitBucketBranch } from '$lib/forge/bitbucket/bitbucketBranch';
+import type { Forge, ForgeName } from '$lib/forge/interface/forge';
+import type { DetailedPullRequest, ForgeArguments } from '$lib/forge/interface/types';
 
 export type PrAction = 'creating_pr';
 export type PrState = { busy: boolean; branchId: string; action?: PrAction };
@@ -18,13 +17,11 @@ export const BITBUCKET_DOMAIN = 'bitbucket.org';
 export class BitBucket implements Forge {
 	readonly name: ForgeName = 'bitbucket';
 	private baseUrl: string;
-	private repo: RepoInfo;
 	private baseBranch: string;
 	private forkStr?: string;
 
 	constructor({ repo, baseBranch, forkStr }: ForgeArguments) {
 		this.baseUrl = `https://${BITBUCKET_DOMAIN}/${repo.owner}/${repo.name}`;
-		this.repo = repo;
 		this.baseBranch = baseBranch;
 		this.forkStr = forkStr;
 	}
@@ -37,23 +34,23 @@ export class BitBucket implements Forge {
 		return `${this.baseUrl}/commits/${id}`;
 	}
 
-	listService() {
+	get listService() {
 		return undefined;
 	}
 
-	issueService() {
+	get issueService() {
 		return undefined;
 	}
 
-	prService() {
+	get prService() {
 		return undefined;
 	}
 
-	repoService() {
+	get repoService() {
 		return undefined;
 	}
 
-	checksMonitor(_sourceBranch: string) {
+	get checks() {
 		return undefined;
 	}
 }

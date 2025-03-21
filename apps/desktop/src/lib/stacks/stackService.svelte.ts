@@ -1,4 +1,5 @@
-import { showToast } from '$lib/notifications/toasts';
+import { invoke } from '$lib/backend/ipc';
+import { showError, showToast } from '$lib/notifications/toasts';
 import { ClientState } from '$lib/state/clientState.svelte';
 import { createSelectNth } from '$lib/state/customSelectors';
 import { ReduxTag } from '$lib/state/tags';
@@ -9,7 +10,7 @@ import type { Commit, StackBranch, UpstreamCommit } from '$lib/branches/v3';
 import type { CommitKey } from '$lib/commits/commit';
 import type { TreeChange } from '$lib/hunks/change';
 import type { HunkHeader } from '$lib/hunks/hunk';
-import type { Stack, StackInfo } from '$lib/stacks/stack';
+import type { BranchDetails, Stack, StackInfo } from '$lib/stacks/stack';
 import type { TauriCommandError } from '$lib/state/backendQuery';
 
 type CreateBranchRequest = { name?: string; ownership?: string; order?: number };
@@ -69,8 +70,11 @@ on fetching and pushing for ways to resolve the problem.
 export class StackService {
 	private api: ReturnType<typeof injectEndpoints>;
 
-	constructor(state: ClientState, posthog: PostHogWrapper) {
-		this.api = injectEndpoints(state.backendApi, posthog);
+	constructor(
+		private readonly state: ClientState,
+		private readonly posthog: PostHogWrapper
+	) {
+		this.api = injectEndpoints(state.backendApi);
 	}
 
 	stacks(projectId: string) {
@@ -100,8 +104,28 @@ export class StackService {
 		);
 	}
 
+	defaultBranch(projectId: string, stackId: string) {
+		return this.api.endpoints.stackBranches.useQuery(
+			{ projectId, stackId },
+			{ transform: (branches) => branchSelectors.selectNth(branches, 0) }
+		);
+	}
+
 	stackInfo(projectId: string, stackId: string) {
-		return this.api.endpoints.stackInfo.useQuery({ projectId, stackId });
+		return this.api.endpoints.stackInfo.useQuery(
+			{ projectId, stackId },
+			{ transform: ([stackInfo]) => stackInfo }
+		);
+	}
+
+	branchDetails(projectId: string, stackId: string, branchName: string) {
+		return this.api.endpoints.stackInfo.useQuery(
+			{ projectId, stackId },
+			{
+				transform: ([, branchDetails]) =>
+					branchDetailsSelectors.selectById(branchDetails, branchName)
+			}
+		);
 	}
 
 	newStack() {
@@ -209,7 +233,14 @@ export class StackService {
 	}
 
 	pushStack() {
-		return this.api.endpoints.pushStack.useMutation();
+		return this.api.endpoints.pushStack.useMutation({
+			sideEffect: () => this.posthog.capture('Push Successful'),
+			onError: (commandError: TauriCommandError) => {
+				const { code, message } = commandError;
+				this.posthog.capture('Push Failed', { error: { code, message } });
+				surfaceStackError('push', code ?? '', message);
+			}
+		});
 	}
 
 	createCommit() {
@@ -220,7 +251,7 @@ export class StackService {
 		const result = $derived(
 			this.api.endpoints.commitChanges.useQuery(
 				{ projectId, commitId },
-				{ transform: (result) => changesSelectors.selectAll(result) }
+				{ transform: (result) => commitChangesSelectors.selectAll(result) }
 			)
 		);
 		return result;
@@ -230,10 +261,24 @@ export class StackService {
 		const result = $derived(
 			this.api.endpoints.commitChanges.useQuery(
 				{ projectId, commitId },
-				{ transform: (result) => changesSelectors.selectById(result, path) }
+				{ transform: (result) => commitChangesSelectors.selectById(result, path) }
 			)
 		);
 		return result;
+	}
+
+	branchChanges(projectId: string, stackId: string, branchName: string) {
+		return this.api.endpoints.branchChanges.useQuery(
+			{ projectId, stackId, branchName },
+			{ transform: (result) => branchChangesSelectors.selectAll(result) }
+		);
+	}
+
+	branchChange(projectId: string, stackId: string, branchName: string, path: string) {
+		return this.api.endpoints.branchChanges.useQuery(
+			{ projectId, stackId, branchName },
+			{ transform: (result) => branchChangesSelectors.selectById(result, path) }
+		);
 	}
 
 	updateCommitMessage() {
@@ -251,9 +296,21 @@ export class StackService {
 	insertBlankCommit() {
 		return this.api.endpoints.insertBlankCommit.useMutation();
 	}
+
+	async unapply(projectId: string, stackId: string) {
+		try {
+			await invoke<void>('save_and_unapply_virtual_branch', {
+				projectId,
+				branch: stackId
+			});
+			this.state.dispatch(this.api.util.invalidateTags([ReduxTag.Stacks]));
+		} catch (err) {
+			showError('Failed to unapply branch', err);
+		}
+	}
 }
 
-function injectEndpoints(api: ClientState['backendApi'], posthog: PostHogWrapper) {
+function injectEndpoints(api: ClientState['backendApi']) {
 	return api.injectEndpoints({
 		endpoints: (build) => ({
 			stacks: build.query<EntityState<Stack, string>, { projectId: string }>({
@@ -286,12 +343,22 @@ function injectEndpoints(api: ClientState['backendApi'], posthog: PostHogWrapper
 					return branchAdapter.addMany(branchAdapter.getInitialState(), response);
 				}
 			}),
-			stackInfo: build.query<StackInfo, { projectId: string; stackId: string }>({
+			stackInfo: build.query<
+				[StackInfo, EntityState<BranchDetails, string>],
+				{ projectId: string; stackId: string }
+			>({
 				query: ({ projectId, stackId }) => ({
 					command: 'stack_info',
 					params: { projectId, stackId }
 				}),
-				providesTags: (_result, _error, { stackId }) => [{ type: ReduxTag.StackInfo, id: stackId }]
+				providesTags: (_result, _error, { stackId }) => [{ type: ReduxTag.StackInfo, id: stackId }],
+				transformResponse(response: StackInfo) {
+					const branchDetilsEntity = branchDetailsAdapter.addMany(
+						branchDetailsAdapter.getInitialState(),
+						response.branchDetails
+					);
+					return [response, branchDetilsEntity] as const;
+				}
 			}),
 			localAndRemoteCommits: build.query<
 				EntityState<Commit, string>,
@@ -331,17 +398,7 @@ function injectEndpoints(api: ClientState['backendApi'], posthog: PostHogWrapper
 					ReduxTag.StackBranches,
 					ReduxTag.Commits,
 					{ type: ReduxTag.StackInfo, id: args.stackId }
-				],
-				transformResponse(response: BranchPushResult) {
-					posthog.capture('Push Successful');
-					return response;
-				},
-				transformErrorResponse(commandError: TauriCommandError) {
-					const { code, message } = commandError;
-					posthog.capture('Push Failed', { error: { code, message } });
-					surfaceStackError('push', code ?? '', message);
-					return commandError;
-				}
+				]
 			}),
 			createCommit: build.mutation<
 				{ newCommit: string; pathsToRejectedChanges: string[] },
@@ -367,7 +424,7 @@ function injectEndpoints(api: ClientState['backendApi'], posthog: PostHogWrapper
 				}),
 				providesTags: [ReduxTag.CommitChanges],
 				transformResponse(changes: TreeChange[]) {
-					return changesAdapter.addMany(changesAdapter.getInitialState(), changes);
+					return commitChangesAdapter.addMany(commitChangesAdapter.getInitialState(), changes);
 				}
 			}),
 			branchChanges: build.query<
@@ -380,7 +437,7 @@ function injectEndpoints(api: ClientState['backendApi'], posthog: PostHogWrapper
 				}),
 				providesTags: [ReduxTag.BranchChanges],
 				transformResponse(changes: TreeChange[]) {
-					return changesAdapter.addMany(changesAdapter.getInitialState(), changes);
+					return branchChangesAdapter.addMany(branchChangesAdapter.getInitialState(), changes);
 				}
 			}),
 			updateCommitMessage: build.mutation<
@@ -409,15 +466,15 @@ function injectEndpoints(api: ClientState['backendApi'], posthog: PostHogWrapper
 					{ type: ReduxTag.StackInfo, id: args.stackId }
 				]
 			}),
-			uncommit: build.mutation<void, { projectId: string; branchId: string; commitOid: string }>({
-				query: ({ projectId, branchId, commitOid }) => ({
+			uncommit: build.mutation<void, { projectId: string; stackId: string; commitId: string }>({
+				query: ({ projectId, stackId: branchId, commitId: commitOid }) => ({
 					command: 'undo_commit',
 					params: { projectId, branchId, commitOid }
 				}),
 				invalidatesTags: (_result, _error, args) => [
 					ReduxTag.StackBranches,
 					ReduxTag.Commits,
-					{ type: ReduxTag.StackInfo, id: args.branchId }
+					{ type: ReduxTag.StackInfo, id: args.stackId }
 				]
 			}),
 			insertBlankCommit: build.mutation<
@@ -464,8 +521,20 @@ const upstreamCommitSelectors = {
 	selectNth: createSelectNth<UpstreamCommit>()
 };
 
-const changesAdapter = createEntityAdapter<TreeChange, string>({
+const commitChangesAdapter = createEntityAdapter<TreeChange, string>({
 	selectId: (change) => change.path
 });
 
-const changesSelectors = changesAdapter.getSelectors();
+const commitChangesSelectors = commitChangesAdapter.getSelectors();
+
+const branchChangesAdapter = createEntityAdapter<TreeChange, string>({
+	selectId: (change) => change.path
+});
+
+const branchChangesSelectors = branchChangesAdapter.getSelectors();
+
+const branchDetailsAdapter = createEntityAdapter<BranchDetails, string>({
+	selectId: (branch) => branch.name
+});
+
+const branchDetailsSelectors = branchDetailsAdapter.getSelectors();

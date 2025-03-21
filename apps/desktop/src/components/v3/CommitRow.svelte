@@ -1,10 +1,9 @@
 <script lang="ts">
-	import CommitHeader from './CommitHeader.svelte';
 	import CommitContextMenu from '$components/v3/CommitContextMenu.svelte';
+	import CommitHeader from '$components/v3/CommitHeader.svelte';
 	import CommitLine from '$components/v3/CommitLine.svelte';
 	import { BaseBranch } from '$lib/baseBranch/baseBranch';
 	import { ModeService } from '$lib/mode/modeService';
-	import { showError } from '$lib/notifications/toasts';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { getContext, getContextStore, maybeGetContext } from '@gitbutler/shared/context';
 	import Button from '@gitbutler/ui/Button.svelte';
@@ -13,13 +12,11 @@
 	import PopoverActionsContainer from '@gitbutler/ui/popoverActions/PopoverActionsContainer.svelte';
 	import PopoverActionsItem from '@gitbutler/ui/popoverActions/PopoverActionsItem.svelte';
 	import type { Commit, UpstreamCommit } from '$lib/branches/v3';
-	import type { CommitKey } from '$lib/commits/commit';
 
 	type Props = {
 		projectId: string;
 		branchName: string;
 		stackId: string;
-		commitKey: CommitKey;
 		commit: Commit | UpstreamCommit;
 		first?: boolean;
 		lastCommit?: boolean;
@@ -34,7 +31,6 @@
 
 	const {
 		projectId,
-		commitKey,
 		stackId,
 		commit,
 		first,
@@ -52,7 +48,7 @@
 	const stackService = getContext(StackService);
 	const modeService = maybeGetContext(ModeService);
 
-	const { triggerMutation: uncommit } = stackService.uncommit();
+	const [uncommit] = stackService.uncommit();
 
 	const commitUrl = undefined;
 	const conflicted = false; // TODO
@@ -72,11 +68,7 @@
 			console.error('Unable to undo commit');
 			return;
 		}
-		const { error } = await uncommit({ projectId, branchId: stackId, commitOid: commit.id });
-		if (error) {
-			showError('Failed to uncommit', error);
-			console.error('Failed to uncommit', error);
-		}
+		await uncommit({ projectId, stackId, commitId: commit.id });
 	}
 
 	function openCommitMessageModal() {
@@ -125,7 +117,9 @@
 		<CommitLine {commit} {lastCommit} {lastBranch} {lineColor} />
 
 		<div class="commit-content">
-			<CommitHeader {projectId} {commitKey} {commit} {onclick} />
+			<button type="button" {onclick} tabindex="0">
+				<CommitHeader {commit} row />
+			</button>
 		</div>
 	</div>
 
@@ -215,12 +209,16 @@
 			transition: transform var(--transition-fast);
 		}
 
-		&.border-top {
-			/* border-top: 1px solid var(--clr-border-2); */
+		&.selected {
+			background-color: var(--clr-selected-not-in-focus-bg);
 		}
 
-		&.selected {
-			/* background-color: var(--clr-bg-1-muted); */
+		/* &:focus.selected {
+			background-color: var(--clr-selected-in-focus-bg);
+		} */
+
+		&:focus-within.selected {
+			background-color: var(--clr-selected-in-focus-bg);
 		}
 
 		&.selected::before {
@@ -234,7 +232,12 @@
 		position: relative;
 		gap: 6px;
 		width: 100%;
-		padding: 14px 14px 14px 0;
 		overflow: hidden;
+
+		& button {
+			padding: 14px 14px 14px 0;
+			display: flex;
+			justify-items: start;
+		}
 	}
 </style>

@@ -7,16 +7,18 @@
 	import { getFilename } from '$lib/files/utils';
 	import { ChangeSelectionService } from '$lib/selection/changeSelection.svelte';
 	import { IdSelection } from '$lib/selection/idSelection.svelte';
-	import { key } from '$lib/selection/key';
+	import { key, type SelectionParameters } from '$lib/selection/key';
 	import { computeChangeStatus } from '$lib/utils/fileStatus';
 	import { getContext, maybeGetContextStore } from '@gitbutler/shared/context';
 	import FileListItemV3 from '@gitbutler/ui/file/FileListItemV3.svelte';
 	import type { TreeChange } from '$lib/hunks/change';
 
 	interface Props {
+		containerFocused?: boolean;
+		index: number;
 		projectId: string;
 		change: TreeChange;
-		commitId?: string;
+		selectedFile: SelectionParameters;
 		selected?: boolean;
 		showCheckbox?: boolean;
 		sticky?: boolean;
@@ -25,8 +27,10 @@
 	}
 
 	const {
-		change: change,
-		commitId,
+		containerFocused,
+		index,
+		change,
+		selectedFile,
 		projectId,
 		selected,
 		showCheckbox,
@@ -42,7 +46,6 @@
 
 	let contextMenu = $state<ReturnType<typeof FileContextMenu>>();
 	let draggableEl: HTMLDivElement | undefined = $state();
-	let open = $state(false);
 
 	const selection = $derived(changeSelection.getById(change.path));
 	const indeterminate = $derived(selection.current && selection.current.type === 'partial');
@@ -62,7 +65,7 @@
 	}
 
 	function onContextMenu(e: MouseEvent) {
-		if (selectedChanges.current.isSuccess && idSelection.has(change.path, commitId)) {
+		if (selectedChanges.current.isSuccess && idSelection.has(change.path, selectedFile)) {
 			const changes: TreeChange[] = selectedChanges.current.data;
 			contextMenu?.open(e, { changes });
 			return;
@@ -78,7 +81,7 @@
 	use:draggableChips={{
 		label: getFilename(change.path),
 		filePath: change.path,
-		data: new ChangeDropData(stackId || '', change, idSelection, commitId),
+		data: new ChangeDropData(stackId || '', change, idSelection, selectedFile),
 		viewportId: 'board-viewport',
 		selector: '.selected-draggable'
 	}}
@@ -92,11 +95,11 @@
 	/>
 
 	<FileListItemV3
-		bind:open
-		id={key(change.path, commitId)}
+		id={key({ ...selectedFile, path: change.path })}
 		filePath={change.path}
 		fileStatus={computeChangeStatus(change)}
 		{selected}
+		focused={idSelection.lastAddedIndex === index && containerFocused}
 		{showCheckbox}
 		checked={!!selection.current}
 		{indeterminate}
@@ -106,9 +109,6 @@
 		conflicted={false}
 		onclick={(e) => {
 			onclick?.(e);
-		}}
-		ondblclick={() => {
-			open = !open;
 		}}
 		oncheck={onCheck}
 		oncontextmenu={onContextMenu}

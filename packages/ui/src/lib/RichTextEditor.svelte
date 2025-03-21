@@ -1,8 +1,8 @@
 <script lang="ts">
-	import MarkdownTransitionPlugin from './richText/plugins/markdownTransition.svelte';
 	import { standardConfig } from '$lib/richText/config/config';
 	import { standardTheme } from '$lib/richText/config/theme';
 	import EmojiPlugin from '$lib/richText/plugins/Emoji.svelte';
+	import MarkdownTransitionPlugin from '$lib/richText/plugins/markdownTransition.svelte';
 	import OnChangePlugin from '$lib/richText/plugins/onChange.svelte';
 	import { COMMAND_PRIORITY_CRITICAL, $getRoot as getRoot, KEY_DOWN_COMMAND } from 'lexical';
 	import { type Snippet } from 'svelte';
@@ -23,8 +23,6 @@
 		CodeActionMenuPlugin,
 		MarkdownShortcutPlugin,
 		ALL_TRANSFORMERS,
-		Toolbar,
-		StateStoreRichTextUpdator,
 		LinkPlugin
 	} from 'svelte-lexical';
 
@@ -33,7 +31,6 @@
 		markdown: boolean;
 		onError: (error: unknown) => void;
 		styleContext: 'client-editor' | 'chat-input';
-		toolBar?: Snippet;
 		plugins?: Snippet;
 		placeholder?: string;
 		onChange?: (text: string) => void;
@@ -46,7 +43,6 @@
 		markdown,
 		onError,
 		styleContext,
-		toolBar,
 		plugins,
 		placeholder,
 		onChange,
@@ -123,13 +119,6 @@
 </script>
 
 <Composer {initialConfig} bind:this={composer}>
-	{#if toolBar}
-		<Toolbar>
-			<StateStoreRichTextUpdator />
-			{@render toolBar()}
-		</Toolbar>
-	{/if}
-
 	<div class="lexical-container lexical-{styleContext}" bind:this={editorDiv}>
 		<div class="editor-scroller">
 			<div class="editor">

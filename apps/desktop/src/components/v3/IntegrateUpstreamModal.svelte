@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
-	import { getForge } from '$lib/forge/interface/forge';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
 	import { type Stack } from '$lib/stacks/stack';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import {
@@ -42,12 +42,11 @@
 
 	const stackService = getContext(StackService);
 	const upstreamIntegrationService = getContext(UpstreamIntegrationService);
-	const forge = getForge();
+	const forge = getContext(DefaultForgeFactory);
 	// let branchStatuses = $state<StackStatusesWithBranchesV3 | undefined>();
 	const baseBranchService = getContext(BaseBranchService);
 	const base = baseBranchService.base;
-	const { triggerMutation: resolveUpstreamIntegration } =
-		upstreamIntegrationService.resolveUpstreamIntegration();
+	const [resolveUpstreamIntegration] = upstreamIntegrationService.resolveUpstreamIntegration();
 
 	let modal = $state<Modal>();
 	let integratingUpstream = $state<OperationState>('inert');
@@ -64,7 +63,7 @@
 		return response.current.data;
 	});
 
-	const { triggerMutation: integrateUpstream } = $derived(
+	const [integrateUpstream] = $derived(
 		upstreamIntegrationService.integrateUpstream(projectId, stacks ?? [])
 	);
 
@@ -108,11 +107,7 @@
 				projectId,
 				resolutionApproach: { type: baseResolutionApproach }
 			}).then((result) => {
-				if (result.error) {
-					console.error('Failed to resolve upstream integration', result.error);
-					return;
-				}
-				targetCommitOid = result.data;
+				targetCommitOid = result;
 			});
 		}
 	});
@@ -231,19 +226,15 @@
 				<div class="scroll-wrap">
 					<ScrollableContainer maxHeight={pxToRem(268)}>
 						{#each $base.upstreamCommits as commit}
+							{@const commitUrl = forge.current.commitUrl(commit.id)}
 							<SimpleCommitRow
 								title={commit.descriptionTitle ?? ''}
 								sha={commit.id}
 								date={commit.createdAt}
 								author={commit.author.name}
-								onUrlOpen={() => {
-									if ($forge) {
-										openExternalUrl($forge.commitUrl(commit.id));
-									}
-								}}
-								onCopy={() => {
-									copyToClipboard(commit.id);
-								}}
+								url={commitUrl}
+								onOpen={(url) => openExternalUrl(url)}
+								onCopy={() => copyToClipboard(commit.id)}
 							/>
 						{/each}
 					</ScrollableContainer>

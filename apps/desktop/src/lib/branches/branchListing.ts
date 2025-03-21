@@ -8,7 +8,6 @@ import { persisted, type Persisted } from '@gitbutler/shared/persisted';
 import { Transform, Type, plainToInstance } from 'class-transformer';
 import Fuse from 'fuse.js';
 import { derived, readable, writable, type Readable, type Writable } from 'svelte/store';
-import type { ForgeListingService } from '$lib/forge/interface/forgeListingService';
 import type { PullRequest } from '$lib/forge/interface/types';
 
 export class BranchListingService {
@@ -130,42 +129,17 @@ export class CombinedBranchListingService {
 	combinedSidebarEntries: Readable<SidebarEntrySubject[]>;
 	// Contains entries grouped by date for the unsearched sidebar entries
 	groupedSidebarEntries: Readable<GroupedSidebarEntries>;
-	// Whether or not to show the pull request tab in the sidebar
-	pullRequestsListed: Readable<boolean>;
 
-	constructor(
-		branchListingService: BranchListingService,
-		forgeListingService: Readable<ForgeListingService | undefined>,
-		projectId: string
-	) {
+	constructor(branchListingService: BranchListingService, projectId: string) {
 		this.selectedOption = persisted<'all' | 'pullRequest' | 'local'>(
 			'all',
 			`branches-selectedOption-${projectId}`
 		);
 
 		// Get a readable store of pull requeests
-		this.pullRequests = readable([] as PullRequest[], (set) => {
-			const unsubscribeListingService = forgeListingService.subscribe((forgeListingService) => {
-				if (!forgeListingService) return;
-
-				const unsubscribePullRequests = forgeListingService.prs.subscribe((prs) => {
-					set(prs);
-				});
-
-				return unsubscribePullRequests;
-			});
-
-			return unsubscribeListingService;
-		});
+		this.pullRequests = readable([] as PullRequest[]);
 
 		// Whether or not to show the pull request tab in the sidebar
-		this.pullRequestsListed = derived(
-			forgeListingService,
-			(forgeListingService) => {
-				return !!forgeListingService;
-			},
-			false
-		);
 
 		// Derive the combined sidebar entries
 		this.combinedSidebarEntries = debouncedDerive(
@@ -370,6 +344,10 @@ export class BranchListing {
 	/** Whether or not there is a local branch as part of the grouping */
 	hasLocal!: boolean;
 
+	get branchNames() {
+		return [this.name].concat(this.virtualBranch ? this.virtualBranch?.stackBranches : []);
+	}
+
 	containsPullRequestBranch(sourceBranch: string): boolean {
 		if (sourceBranch === this.name) return true;
 		if (this.virtualBranch?.stackBranches.includes(sourceBranch)) return true;
@@ -461,7 +439,9 @@ export type SidebarEntrySubject =
 	  };
 
 export function getEntryUpdatedDate(entry: SidebarEntrySubject) {
-	return entry.type === 'branchListing' ? entry.subject.updatedAt : entry.subject.modifiedAt;
+	return new Date(
+		entry.type === 'branchListing' ? entry.subject.updatedAt : entry.subject.modifiedAt
+	);
 }
 
 export function getEntryName(entry: SidebarEntrySubject) {

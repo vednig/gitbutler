@@ -1,6 +1,5 @@
 <script lang="ts">
 	import RadioButton from '$components/RadioButton.svelte';
-	import { showError } from '$lib/notifications/toasts';
 	import { stackPath } from '$lib/routes/routes.svelte';
 	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { getContext } from '@gitbutler/shared/context';
@@ -20,8 +19,8 @@
 
 	const { projectId, stackId, overflow = false }: Props = $props();
 	const stackService = getContext(StackService);
-	const { result: stackCreation, triggerMutation: createNewStack } = stackService.newStack();
-	const { result: branchCreation, triggerMutation: createNewBranch } = stackService.newBranch();
+	const [createNewStack, stackCreation] = stackService.newStack();
+	const [createNewBranch, branchCreation] = stackService.newBranch();
 
 	let createRefModal = $state<ReturnType<typeof Modal>>();
 	let createRefName: string | undefined = $state();
@@ -42,29 +41,24 @@
 
 	async function addNew() {
 		if (createRefType === 'stack') {
-			const { data, error } = await createNewStack({ projectId, branch: { name: createRefName } });
-			if (data) {
-				goto(stackPath(projectId, data.id));
-				createRefModal?.close();
-			} else {
-				showError('Failed to add new stack', error);
-			}
+			const data = await createNewStack({
+				projectId,
+				branch: { name: createRefName }
+			});
+			goto(stackPath(projectId, data.id));
+			createRefModal?.close();
 		} else {
 			if (!stackId || !createRefName) {
 				// TODO: Add input validation.
 				return;
 			}
-			const { error } = await createNewBranch({
+			await createNewBranch({
 				projectId,
 				stackId,
 				request: { targetPatch: undefined, name: createRefName }
 			});
-			if (error) {
-				showError('Failed to add new branch', error);
-			} else {
-				goto(stackPath(projectId, stackId));
-				createRefModal?.close();
-			}
+			goto(stackPath(projectId, stackId));
+			createRefModal?.close();
 		}
 	}
 

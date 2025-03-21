@@ -1,4 +1,8 @@
-import MetricsReporter, { HOUR_MS, DELAY_MS, INTERVAL_MS } from './MetricsReporter.svelte';
+import MetricsReporter, {
+	HOUR_MS,
+	DELAY_MS,
+	INTERVAL_MS
+} from '$components/MetricsReporter.svelte';
 import { PostHogWrapper } from '$lib/analytics/posthog';
 import { ProjectMetrics } from '$lib/metrics/projectMetrics';
 import { ProjectService } from '$lib/project/projectService';
@@ -17,7 +21,7 @@ describe('MetricsReporter', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		projectMetrics = new ProjectMetrics(PROJECT_ID);
+		projectMetrics = new ProjectMetrics();
 		posthog = new PostHogWrapper();
 		projectService = { project: writable(undefined), projectId: PROJECT_ID };
 		context = new Map([
@@ -34,8 +38,8 @@ describe('MetricsReporter', () => {
 	test('should report on interval', async () => {
 		const posthogMock = vi.spyOn(posthog, 'capture').mock;
 
-		projectMetrics.setMetric(METRIC_NAME, 1);
-		render(MetricsReporter, { props: { projectMetrics }, context });
+		projectMetrics.setMetric(PROJECT_ID, METRIC_NAME, 1);
+		render(MetricsReporter, { props: { projectId: PROJECT_ID, projectMetrics }, context });
 
 		// Verify nothing happens immediately.
 		assert.equal(posthogMock.calls.length, 0);
@@ -54,9 +58,9 @@ describe('MetricsReporter', () => {
 
 		// Metrics are reset after they have been reported, so we should expect
 		// that previous value does not influence next max/min.
-		projectMetrics.setMetric(METRIC_NAME, -1);
-		projectMetrics.setMetric(METRIC_NAME, 1);
-		projectMetrics.setMetric(METRIC_NAME, 0);
+		projectMetrics.setMetric(PROJECT_ID, METRIC_NAME, -1);
+		projectMetrics.setMetric(PROJECT_ID, METRIC_NAME, 1);
+		projectMetrics.setMetric(PROJECT_ID, METRIC_NAME, 0);
 
 		// Stop just one millisecond short of the reporting interval, and verify
 		// it has not run again.
@@ -82,8 +86,8 @@ describe('MetricsReporter', () => {
 		// Simulate last report to have been sent at hour 1.
 		localStorage.setItem('lastMetricsTs-fake-id', HOUR_MS.toString());
 
-		projectMetrics.setMetric(METRIC_NAME, 1);
-		render(MetricsReporter, { props: { projectMetrics }, context });
+		projectMetrics.setMetric(PROJECT_ID, METRIC_NAME, 1);
+		render(MetricsReporter, { props: { projectId: PROJECT_ID, projectMetrics }, context });
 
 		// Verify it did not fire immediately.
 		assert.equal(captureMock.calls.length, 0);
@@ -93,7 +97,7 @@ describe('MetricsReporter', () => {
 		assert.equal(captureMock.calls.length, 1);
 
 		// Set new metric value since last one should have been cleared.
-		projectMetrics.setMetric(METRIC_NAME, 1);
+		projectMetrics.setMetric(PROJECT_ID, METRIC_NAME, 1);
 
 		// Advance by full interval and ensure it fires again.
 		await vi.advanceTimersByTimeAsync(INTERVAL_MS);

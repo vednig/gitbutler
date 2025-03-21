@@ -1,12 +1,10 @@
-import { buildContextStore } from '@gitbutler/shared/context';
-import type { PullRequest } from './types';
-import type { Readable } from 'svelte/store';
-
-export const [getForgeListingService, createForgeListingServiceStore] = buildContextStore<
-	ForgeListingService | undefined
->('forgeListingService');
+import type { PullRequest } from '$lib/forge/interface/types';
+import type { ReactiveResult } from '$lib/state/butlerModule';
+import type { Reactive } from '@gitbutler/shared/storeUtils';
 
 export interface ForgeListingService {
-	prs: Readable<PullRequest[]>;
-	refresh(): Promise<void>;
+	list(projectId: string, pollingInterval?: number): ReactiveResult<PullRequest[]>;
+	getByBranch(projectId: string, branchName: string): ReactiveResult<PullRequest>;
+	filterByBranch(projectId: string, branchName: string[]): Reactive<PullRequest[]>;
+	refresh(projectId: string): Promise<void>;
 }

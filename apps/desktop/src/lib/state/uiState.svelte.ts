@@ -6,13 +6,27 @@ import {
 	type ThunkDispatch,
 	type UnknownAction
 } from '@reduxjs/toolkit';
-
+import storage from 'redux-persist/lib/storage';
 type DrawerPage = 'branch' | 'new-commit' | 'pr' | 'br' | 'branch' | undefined;
 
 type CommitSelection = {
 	branchName: string;
 	commitId?: string;
 	upstream?: boolean;
+};
+
+export const uiStatePersistConfig = {
+	key: 'uiState',
+	storage: storage
+};
+
+type StackUiState = {
+	selection: CommitSelection | undefined;
+};
+
+type ProjectUiState = {
+	drawerPage: DrawerPage;
+	drawerFullScreen: boolean;
 };
 
 /**
@@ -22,20 +36,21 @@ export class UiState {
 	private state = $state<EntityState<UiStateVariable, string>>(uiStateSlice.getInitialState());
 
 	/** Properties scoped to a specific stack. */
-	readonly stack = this.buildScopedProps({
-		selection: undefined as CommitSelection | undefined
+	readonly stack = this.buildScopedProps<StackUiState>({
+		selection: undefined
 	});
 
 	/** Properties scoped to a specific project. */
-	readonly project = this.buildScopedProps({
-		drawerPage: undefined as DrawerPage
+	readonly project = this.buildScopedProps<ProjectUiState>({
+		drawerPage: undefined,
+		drawerFullScreen: false
 	});
 
 	/** Properties that are globally scoped. */
 	readonly global = this.buildGlobalProps({
 		drawerHeight: 20,
-		leftWidth: 25,
-		rightWidth: 25
+		leftWidth: 17.5,
+		rightWidth: 21.25
 	});
 
 	constructor(

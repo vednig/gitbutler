@@ -4,6 +4,7 @@
 	import noChanges from '$lib/assets/illustrations/no-changes.svg?raw';
 	import { createCommitStore } from '$lib/commits/contexts';
 	import { ChangeSelectionService } from '$lib/selection/changeSelection.svelte';
+	import { StackService } from '$lib/stacks/stackService.svelte';
 	import { UiState } from '$lib/state/uiState.svelte';
 	import { WorktreeService } from '$lib/worktree/worktreeService.svelte';
 	import { inject } from '@gitbutler/shared/context';
@@ -12,19 +13,27 @@
 
 	type Props = {
 		projectId: string;
+		stackId?: string;
 	};
 
-	const { projectId }: Props = $props();
+	const { projectId, stackId }: Props = $props();
 
-	const [changeSelection, worktreeService, uiState] = inject(
+	const [changeSelection, worktreeService, uiState, stackService] = inject(
 		ChangeSelectionService,
 		WorktreeService,
-		UiState
+		UiState,
+		StackService
 	);
 
 	const projectState = $derived(uiState.project(projectId));
 	const drawerPage = $derived(projectState.drawerPage.get());
 	const isCommitting = $derived(drawerPage.current === 'new-commit');
+	const stackState = $derived(stackId ? uiState.stack(stackId) : undefined);
+	const defaultBranchResult = $derived(
+		stackId !== undefined ? stackService.defaultBranch(projectId, stackId) : undefined
+	);
+	const defaultBranch = $derived(defaultBranchResult?.current.data);
+	const defaultBranchName = $derived(defaultBranch?.name);
 
 	// TODO: Make this go away.
 	createCommitStore(undefined);
@@ -36,17 +45,25 @@
 		const affectedPaths = changesResult.current.data?.map((c) => c.path);
 		changeSelection.retain(affectedPaths);
 	});
+
+	function startCommit() {
+		if (!defaultBranchName) return;
+		stackState?.selection.set({ branchName: defaultBranchName });
+		projectState.drawerPage.set('new-commit');
+	}
 </script>
 
 <ReduxResult result={changesResult.current}>
 	{#snippet children(changes)}
 		<div class="worktree-header text-14 text-semibold">
-			<span>Uncommitted changes</span>
-			<Badge>{changes.length}</Badge>
+			<h3>Uncommitted changes</h3>
+			{#if changes.length > 0}
+				<Badge>{changes.length}</Badge>
+			{/if}
 		</div>
 		{#if changes.length > 0}
 			<div class="uncommitted-changes">
-				<FileList {projectId} {changes} showCheckboxes={isCommitting} />
+				<FileList type="worktree" {projectId} {changes} showCheckboxes={isCommitting} />
 				<div class="start-commit">
 					<Button
 						kind={isCommitting ? 'outline' : 'solid'}
@@ -54,17 +71,19 @@
 						size="cta"
 						wide
 						disabled={isCommitting}
-						onclick={() => projectState.drawerPage.set('new-commit')}
+						onclick={startCommit}
 					>
 						Start a commit…
 					</Button>
 				</div>
 			</div>
 		{:else}
-			<div class="text-12 text-body helper-text">
+			<div class="empty-state">
 				{@html noChanges}
-				<div>You're all caught up!</div>
-				<div>No files need committing</div>
+				<p class="text-13 text-body empty-state-text">
+					You're all caught up!<br />
+					No files need committing
+				</p>
 			</div>
 		{/if}
 	{/snippet}
@@ -73,7 +92,7 @@
 <style>
 	.worktree-header {
 		display: flex;
-		padding: 10px 8px 10px 14px;
+		padding: 14px 8px 12px 14px;
 		width: 100%;
 		gap: 4px;
 		align-items: center;
@@ -94,14 +113,22 @@
 		overflow: hidden;
 	}
 
-	.helper-text {
-		text-align: center;
-		color: var(--clr-text-2);
-		opacity: 0.6;
-		margin-top: 10px;
-	}
-
 	.start-commit {
 		padding: 16px;
+	}
+
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 20px;
+		padding: 0 20px 40px;
+		height: 100%;
+	}
+
+	.empty-state-text {
+		text-align: center;
+		color: var(--clr-text-3);
 	}
 </style>

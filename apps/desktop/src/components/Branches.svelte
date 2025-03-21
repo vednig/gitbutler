@@ -1,15 +1,16 @@
 <script lang="ts">
-	import GroupHeader from './GroupHeader.svelte';
 	import BranchListingSidebarEntry from '$components/BranchListingSidebarEntry.svelte';
 	import ChunkyList from '$components/ChunkyList.svelte';
 	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
+	import GroupHeader from '$components/GroupHeader.svelte';
 	import PullRequestSidebarEntry from '$components/PullRequestSidebarEntry.svelte';
 	import noBranchesSvg from '$lib/assets/empty-state/no-branches.svg?raw';
 	import {
 		CombinedBranchListingService,
 		type SidebarEntrySubject
 	} from '$lib/branches/branchListing';
-	import { getContext } from '@gitbutler/shared/context';
+	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
+	import { inject } from '@gitbutler/shared/context';
 	import Badge from '@gitbutler/ui/Badge.svelte';
 	import EmptyStatePlaceholder from '@gitbutler/ui/EmptyStatePlaceholder.svelte';
 	import Icon from '@gitbutler/ui/Icon.svelte';
@@ -17,11 +18,24 @@
 	import SegmentControl from '@gitbutler/ui/segmentControl/SegmentControl.svelte';
 	import { writable } from 'svelte/store';
 
-	const combinedBranchListingService = getContext(CombinedBranchListingService);
+	const { projectId }: { projectId: string } = $props();
+
+	const [forge, combinedBranchListingService] = inject(
+		DefaultForgeFactory,
+		CombinedBranchListingService
+	);
 
 	let searchEl: HTMLInputElement;
 	let searching = $state(false);
 	let searchTerm = writable<string | undefined>();
+
+	const pollingInterval = 15 * 60 * 1000; // 15 minutes.
+	const listResult = $derived(forge.current.listService?.list(projectId, pollingInterval));
+
+	$effect(() => {
+		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+		listResult?.current; // Intentional noop to keep subscription active.
+	});
 
 	function handleSearchKeyDown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
@@ -54,10 +68,10 @@
 	const searchedBranches = combinedBranchListingService.search(searchTerm);
 	const groupedBranches = combinedBranchListingService.groupedSidebarEntries;
 	const selectedOption = combinedBranchListingService.selectedOption;
-	const pullRequestsListed = combinedBranchListingService.pullRequestsListed;
+	const pullRequestsListed = !!forge.current.listService;
 
 	const filterOptions = $derived.by(() => {
-		if ($pullRequestsListed) {
+		if (pullRequestsListed) {
 			return {
 				all: 'All',
 				pullRequest: 'PRs',
@@ -87,7 +101,7 @@
 
 {#snippet sidebarEntry(sidebarEntrySubject: SidebarEntrySubject)}
 	{#if sidebarEntrySubject.type === 'branchListing'}
-		<BranchListingSidebarEntry branchListing={sidebarEntrySubject.subject} />
+		<BranchListingSidebarEntry {projectId} branchListing={sidebarEntrySubject.subject} />
 	{:else}
 		<PullRequestSidebarEntry pullRequest={sidebarEntrySubject.subject} />
 	{/if}
@@ -147,7 +161,10 @@
 						<div class="group">
 							{#each $searchedBranches as sidebarEntrySubject}
 								{#if sidebarEntrySubject.type === 'branchListing'}
-									<BranchListingSidebarEntry branchListing={sidebarEntrySubject.subject} />
+									<BranchListingSidebarEntry
+										{projectId}
+										branchListing={sidebarEntrySubject.subject}
+									/>
 								{:else}
 									<PullRequestSidebarEntry pullRequest={sidebarEntrySubject.subject} />
 								{/if}
