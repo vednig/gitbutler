@@ -7,54 +7,17 @@ use anyhow::{anyhow, Context, Result};
 use gitbutler_command_context::CommandContext;
 use gitbutler_error::error::Code;
 use gitbutler_id::id::Id;
-use gitbutler_oplog::{
-    entry::{OperationKind, SnapshotDetails},
-    OplogExt,
-};
+use gitbutler_oplog::OplogExt;
 use gitbutler_project as projects;
 use gitbutler_project::{CodePushState, Project};
 use gitbutler_reference::Refname;
-use gitbutler_stack::{StackId, Target, VirtualBranchesHandle};
+use gitbutler_stack::{Target, VirtualBranchesHandle};
 use gitbutler_url::Url;
 use gitbutler_user as users;
 use itertools::Itertools;
 
-pub fn take_synced_snapshot(
-    ctx: &CommandContext,
-    user: &users::User,
-    stack_id: Option<StackId>,
-) -> Result<git2::Oid> {
-    let project = ctx.project();
-    let mut guard = project.exclusive_worktree_access();
-
-    let virtual_branches_handle = VirtualBranchesHandle::new(project.gb_dir());
-    if let Some(stack_id) = stack_id {
-        let mut stack = virtual_branches_handle.get_stack_in_workspace(stack_id)?;
-        stack.post_commits = true;
-        virtual_branches_handle.set_stack(stack)?;
-    }
-
-    let snapshot = project.create_snapshot(
-        SnapshotDetails::new(OperationKind::SyncWorkspace),
-        guard.write_permission(),
-    )?;
-    push_oplog(ctx, user)?;
-
-    if let Some(stack_id) = stack_id {
-        let mut stack = virtual_branches_handle.get_stack_in_workspace(stack_id)?;
-        stack.post_commits = true;
-        virtual_branches_handle.set_stack(stack)?;
-    }
-
-    Ok(snapshot)
-}
-
 /// Pushes the repository to the GitButler remote
-pub fn push_repo(
-    ctx: &CommandContext,
-    user: &users::User,
-    projects: &projects::Controller,
-) -> Result<()> {
+pub fn push_repo(ctx: &CommandContext, user: &users::User) -> Result<()> {
     let project = ctx.project();
     let vb_state = VirtualBranchesHandle::new(project.gb_dir());
     let default_target = vb_state.get_default_target()?;
@@ -66,7 +29,6 @@ pub fn push_repo(
 
     // Push target
     push_target(
-        projects,
         ctx,
         &default_target,
         gb_code_last_commit,
@@ -84,9 +46,8 @@ pub fn push_repo(
 pub fn push_oplog(ctx: &CommandContext, user: &users::User) -> Result<()> {
     // Push Oplog head
     let oplog_refspec = ctx
-        .project()
         .oplog_head()?
-        .map(|sha| format!("+{}:refs/gitbutler/oplog", sha));
+        .map(|sha| format!("+{sha}:refs/gitbutler/oplog"));
 
     if let Some(oplog_refspec) = oplog_refspec {
         push_to_gitbutler_server(
@@ -100,7 +61,6 @@ pub fn push_oplog(ctx: &CommandContext, user: &users::User) -> Result<()> {
 }
 
 fn push_target(
-    projects: &projects::Controller,
     ctx: &CommandContext,
     default_target: &Target,
     gb_code_last_commit: Option<git2::Oid>,
@@ -124,10 +84,10 @@ fn push_target(
     let remote = remote(ctx, RemoteKind::Code)?;
     let id_count = ids.len();
     for (idx, id) in ids.iter().enumerate().rev() {
-        let refspec = format!("+{}:refs/push-tmp/{}", id, project_id);
+        let refspec = format!("+{id}:refs/push-tmp/{project_id}");
 
         push_to_gitbutler_server(ctx, Some(user), &[&refspec], remote.clone())?;
-        update_project(projects, project_id, *id)?;
+        update_project(project_id, *id)?;
 
         tracing::info!(
             %project_id,
@@ -161,11 +121,9 @@ fn batch_rev_walk(
     let mut revwalk = repo.revwalk().context("failed to create revwalk")?;
     revwalk
         .push(from)
-        .context(format!("failed to push {}", from))?;
+        .context(format!("failed to push {from}"))?;
     if let Some(oid) = until {
-        revwalk
-            .hide(oid)
-            .context(format!("failed to hide {}", oid))?;
+        revwalk.hide(oid).context(format!("failed to hide {oid}"))?;
     }
     let mut oids = Vec::new();
     oids.push(from);
@@ -206,7 +164,7 @@ fn push_all_refs(
                 Refname::Remote(_) | Refname::Virtual(_) | Refname::Local(_)
             )
         })
-        .map(|r| format!("+{}:{}", r, r))
+        .map(|r| format!("+{r}:{r}"))
         .collect();
 
     let all_refs: Vec<_> = all_refs.iter().map(String::as_str).collect();
@@ -221,21 +179,16 @@ fn push_all_refs(
     }
     Ok(())
 }
-fn update_project(
-    projects: &projects::Controller,
-    project_id: Id<projects::Project>,
-    id: git2::Oid,
-) -> Result<()> {
-    projects
-        .update(&projects::UpdateRequest {
-            id: project_id,
-            gitbutler_code_push_state: Some(CodePushState {
-                id,
-                timestamp: time::SystemTime::now(),
-            }),
-            ..Default::default()
-        })
-        .context("failed to update last push")?;
+fn update_project(project_id: Id<projects::Project>, id: git2::Oid) -> Result<()> {
+    gitbutler_project::update(&projects::UpdateRequest {
+        id: project_id,
+        gitbutler_code_push_state: Some(CodePushState {
+            id,
+            timestamp: time::SystemTime::now(),
+        }),
+        ..Default::default()
+    })
+    .context("failed to update last push")?;
     Ok(())
 }
 
@@ -303,7 +256,7 @@ pub(crate) enum RemoteKind {
     Code,
     Oplog,
 }
-pub(crate) fn remote(ctx: &CommandContext, kind: RemoteKind) -> Result<git2::Remote> {
+pub(crate) fn remote(ctx: &CommandContext, kind: RemoteKind) -> Result<git2::Remote<'_>> {
     let api_project = ctx.project().api.as_ref().context("api not set")?;
     let url = match kind {
         RemoteKind::Code => {

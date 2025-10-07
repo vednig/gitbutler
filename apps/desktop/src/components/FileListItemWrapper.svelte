@@ -1,160 +1,224 @@
+<!-- This is a V3 replacement for `FileListItemWrapper.svelte` -->
 <script lang="ts">
 	import FileContextMenu from '$components/FileContextMenu.svelte';
-	import { BranchStack } from '$lib/branches/branch';
-	import { SelectedOwnership } from '$lib/branches/ownership';
-	import { getLocalCommits, getLocalAndRemoteCommits } from '$lib/commits/contexts';
-	import { getCommitStore } from '$lib/commits/contexts';
-	import { draggableChips, type DraggableConfig } from '$lib/dragging/draggable';
-	import { FileDropData } from '$lib/dragging/draggables';
-	import { LocalFile } from '$lib/files/file';
-	import { type AnyFile } from '$lib/files/file';
-	import { getLockText } from '$lib/files/lock';
-	import { FileIdSelection } from '$lib/selection/fileIdSelection';
-	import { itemsSatisfy } from '$lib/utils/array';
-	import { computeFileStatus } from '$lib/utils/fileStatus';
-	import { getContext, maybeGetContextStore } from '@gitbutler/shared/context';
-	import FileListItem from '@gitbutler/ui/file/FileListItem.svelte';
-	import type { Writable } from 'svelte/store';
+	import { conflictEntryHint } from '$lib/conflictEntryPresence';
+	import { draggableChips } from '$lib/dragging/draggable';
+	import { ChangeDropData } from '$lib/dragging/draggables';
+	import { DROPZONE_REGISTRY } from '$lib/dragging/registry';
+	import { getFilename } from '$lib/files/utils';
+	import { type TreeChange } from '$lib/hunks/change';
+	import { FILE_SELECTION_MANAGER } from '$lib/selection/fileSelectionManager.svelte';
+	import { key, type SelectionId } from '$lib/selection/key';
+	import { UNCOMMITTED_SERVICE } from '$lib/selection/uncommittedService.svelte';
+	import { computeChangeStatus } from '$lib/utils/fileStatus';
+	import { inject } from '@gitbutler/core/context';
+	import { FileListItem, FileViewHeader, TestId } from '@gitbutler/ui';
+	import { DRAG_STATE_SERVICE } from '@gitbutler/ui/drag/dragStateService.svelte';
+	import { type FocusableOptions } from '@gitbutler/ui/focus/focusManager';
+	import { sticky as stickyAction } from '@gitbutler/ui/utils/sticky';
+	import type { ConflictEntriesObj } from '$lib/files/conflicts';
+	import type { Rename } from '$lib/hunks/change';
+	import type { UnifiedDiff } from '$lib/hunks/diff';
 
 	interface Props {
-		file: AnyFile;
-		isUnapplied: boolean;
-		selected: boolean;
-		showCheckbox: boolean;
-		readonly: boolean;
-		onclick: (e: MouseEvent) => void;
+		projectId: string;
+		stackId?: string;
+		change: TreeChange;
+		diff?: UnifiedDiff | null;
+		selectionId: SelectionId;
+		selected?: boolean;
+		isHeader?: boolean;
+		listMode: 'list' | 'tree';
+		linesAdded?: number;
+		linesRemoved?: number;
+		depth?: number;
+		executable?: boolean;
+		focusableOpts?: FocusableOptions;
+		showCheckbox?: boolean;
+		draggable?: boolean;
+		transparent?: boolean;
+		sticky?: boolean;
+		active?: boolean;
+		onclick?: (e: MouseEvent) => void;
 		onkeydown?: (e: KeyboardEvent) => void;
+		onCloseClick?: () => void;
+		conflictEntries?: ConflictEntriesObj;
+		scrollContainer?: HTMLDivElement;
+		hideBorder?: boolean;
 	}
 
-	const { file, isUnapplied, selected, showCheckbox, readonly, onclick, onkeydown }: Props =
-		$props();
+	const {
+		change,
+		diff,
+		selectionId,
+		projectId,
+		stackId,
+		selected,
+		isHeader,
+		listMode,
+		depth,
+		executable,
+		showCheckbox,
+		conflictEntries,
+		draggable,
+		transparent,
+		focusableOpts,
+		active,
+		onclick,
+		onkeydown,
+		onCloseClick,
+		hideBorder,
+		scrollContainer
+	}: Props = $props();
 
-	const stack = maybeGetContextStore(BranchStack);
-	const branchId = $derived($stack?.id);
-	const selectedOwnership: Writable<SelectedOwnership> | undefined =
-		maybeGetContextStore(SelectedOwnership);
-	const fileIdSelection = getContext(FileIdSelection);
-	const commit = getCommitStore();
-
-	// TODO: Refactor this into something more meaningful.
-	const localCommits = file instanceof LocalFile ? getLocalCommits() : undefined;
-	const remoteCommits = file instanceof LocalFile ? getLocalAndRemoteCommits() : undefined;
-	let lockedIds = file.lockedIds;
-	const lockText = $derived(
-		lockedIds.length > 0 && $localCommits
-			? getLockText(lockedIds, ($localCommits || []).concat($remoteCommits || []))
-			: ''
-	);
-	const selectedFiles = fileIdSelection.files;
-	const draggable = !readonly && !isUnapplied;
+	const idSelection = inject(FILE_SELECTION_MANAGER);
+	const uncommittedService = inject(UNCOMMITTED_SERVICE);
+	const dropzoneRegistry = inject(DROPZONE_REGISTRY);
+	const dragStateService = inject(DRAG_STATE_SERVICE);
 
 	let contextMenu = $state<ReturnType<typeof FileContextMenu>>();
 	let draggableEl: HTMLDivElement | undefined = $state();
-	let indeterminate = $state(false);
-	let checked = $state(false);
+	let isStuck = $state(false);
 
-	$effect(() => {
-		if (file && $selectedOwnership) {
-			const hunksContained = itemsSatisfy(file.hunks, (h) =>
-				$selectedOwnership?.isSelected(file.id, h.id)
-			);
-			checked = hunksContained === 'all';
-			indeterminate = hunksContained === 'some';
-		}
-	});
+	const previousTooltipText = $derived(
+		(change.status.subject as Rename).previousPath
+			? `${(change.status.subject as Rename).previousPath} →\n${change.path}`
+			: undefined
+	);
 
-	// TODO: Refactor to use this as a Svelte action, e.g. `use:draggableChips()`.
-	let chips:
-		| {
-				update: (opts: DraggableConfig) => void;
-				destroy: () => void;
-		  }
-		| undefined;
-
-	// Manage the lifecycle of the draggable chips.
-	$effect(() => {
-		if (draggableEl) {
-			const dropData = new FileDropData(branchId || '', file, $commit, selectedFiles);
-			const config: DraggableConfig = {
-				label: `${file.filename}`,
-				filePath: file.path,
-				data: dropData,
-				disabled: !draggable,
-				viewportId: 'board-viewport',
-				selector: '.selected-draggable'
+	const lineChangesStat = $derived.by(() => {
+		if (diff && diff.type === 'Patch') {
+			return {
+				added: diff.subject.linesAdded,
+				removed: diff.subject.linesRemoved
 			};
-			if (chips) {
-				chips.update(config);
-			} else {
-				chips = draggableChips(draggableEl, config);
-			}
-		} else {
-			chips?.destroy();
 		}
-
-		return () => {
-			chips?.destroy();
-		};
+		return undefined;
 	});
+
+	function onCheck(checked: boolean) {
+		if (checked) {
+			uncommittedService.checkFile(stackId || null, change.path);
+		} else {
+			uncommittedService.uncheckFile(stackId || null, change.path);
+		}
+	}
+
+	const checkStatus = $derived(
+		uncommittedService.fileCheckStatus(stackId || undefined, change.path)
+	);
+
+	async function onContextMenu(e: MouseEvent) {
+		const changes = await idSelection.treeChanges(projectId, selectionId);
+		if (idSelection.has(change.path, selectionId) && changes.length > 0) {
+			contextMenu?.open(e, { changes });
+			return;
+		}
+		contextMenu?.open(e, { changes: [change] });
+	}
+
+	const conflict = $derived(conflictEntries ? conflictEntries.entries[change.path] : undefined);
+	const draggableDisabled = $derived(!draggable || showCheckbox);
 </script>
 
-<FileContextMenu
-	bind:this={contextMenu}
-	trigger={draggableEl}
-	{isUnapplied}
-	branchId={$stack?.id}
-	isBinary={file.binary}
-/>
-
-<FileListItem
-	id={file.id}
-	bind:ref={draggableEl}
-	filePath={file.path}
-	fileStatus={computeFileStatus(file)}
-	{selected}
-	{showCheckbox}
-	{checked}
-	{indeterminate}
-	{draggable}
-	{onclick}
-	{onkeydown}
-	locked={file.locked}
-	conflicted={file.conflicted}
-	{lockText}
-	oncheck={(e) => {
-		const isChecked = e.currentTarget.checked;
-		selectedOwnership?.update((ownership) => {
-			if (isChecked) {
-				file.hunks.forEach((h) => ownership.select(file.id, h));
-			} else {
-				file.hunks.forEach((h) => ownership.ignore(file.id, h.id));
-			}
-			return ownership;
-		});
-
-		if ($selectedFiles.length > 0 && $selectedFiles.includes(file)) {
-			if (isChecked) {
-				$selectedFiles.forEach((f) => {
-					selectedOwnership?.update((ownership) => {
-						f.hunks.forEach((h) => ownership.select(f.id, h));
-						return ownership;
-					});
-				});
-			} else {
-				$selectedFiles.forEach((f) => {
-					selectedOwnership?.update((ownership) => {
-						f.hunks.forEach((h) => ownership.ignore(f.id, h.id));
-						return ownership;
-					});
-				});
-			}
+<div
+	data-testid={TestId.FileListItem}
+	class="filelistitem-wrapper"
+	data-remove-from-panning
+	class:filelistitem-header={isHeader}
+	class:transparent
+	class:stuck={isHeader && isStuck}
+	bind:this={draggableEl}
+	use:draggableChips={{
+		label: getFilename(change.path),
+		filePath: change.path,
+		data: new ChangeDropData(projectId, change, idSelection, selectionId, stackId || undefined),
+		viewportId: 'board-viewport',
+		selector: '.selected-draggable',
+		disabled: draggableDisabled,
+		chipType: 'file',
+		dropzoneRegistry,
+		dragStateService
+	}}
+	use:stickyAction={{
+		enabled: isHeader,
+		scrollContainer,
+		onStuck: (stuck) => {
+			isStuck = stuck;
 		}
 	}}
-	oncontextmenu={(e) => {
-		if (fileIdSelection.has(file.id, $commit?.id)) {
-			contextMenu?.open(e, { files: $selectedFiles });
-		} else {
-			contextMenu?.open(e, { files: [file] });
+>
+	<FileContextMenu
+		bind:this={contextMenu}
+		{projectId}
+		{stackId}
+		trigger={draggableEl}
+		{selectionId}
+	/>
+
+	{#if isHeader}
+		<FileViewHeader
+			filePath={change.path}
+			fileStatus={computeChangeStatus(change)}
+			draggable={!showCheckbox && draggable}
+			linesAdded={lineChangesStat?.added}
+			linesRemoved={lineChangesStat?.removed}
+			fileStatusTooltip={previousTooltipText}
+			{executable}
+			oncontextmenu={(e) => {
+				e.stopPropagation();
+				e.preventDefault();
+				onContextMenu(e);
+			}}
+			oncloseclick={onCloseClick}
+		/>
+	{:else}
+		<FileListItem
+			id={key({ ...selectionId, path: change.path })}
+			filePath={change.path}
+			fileStatus={computeChangeStatus(change)}
+			{selected}
+			{showCheckbox}
+			fileStatusTooltip={previousTooltipText}
+			{listMode}
+			checked={checkStatus.current === 'checked' || checkStatus.current === 'indeterminate'}
+			{active}
+			indeterminate={checkStatus.current === 'indeterminate'}
+			{depth}
+			{executable}
+			draggable={!draggableDisabled}
+			{onkeydown}
+			{hideBorder}
+			locked={false}
+			conflicted={!!conflict}
+			conflictHint={conflict ? conflictEntryHint(conflict) : undefined}
+			{onclick}
+			oncheck={(e) => onCheck(e.currentTarget.checked)}
+			oncontextmenu={onContextMenu}
+			actionOpts={focusableOpts}
+		/>
+	{/if}
+</div>
+
+<style lang="postcss">
+	.filelistitem-wrapper {
+		/* We have two nested divs for one file, but a block within a block
+		   seems fine. It seems we cannot have them both be flex boxes, it
+		   makes any :hover css trigger excessive layout passes, thus making
+		   the interface super slow. */
+		display: block;
+
+		&.transparent {
+			background-color: transparent;
 		}
-	}}
-/>
+
+		&.stuck {
+			border-bottom: 1px solid var(--clr-border-2);
+			background-color: var(--clr-bg-1);
+			box-shadow: 0 1px 8px rgba(0, 0, 0, 0.1);
+		}
+	}
+	.filelistitem-header {
+		z-index: var(--z-lifted);
+	}
+</style>

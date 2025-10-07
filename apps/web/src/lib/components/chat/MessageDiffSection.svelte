@@ -1,7 +1,5 @@
 <script lang="ts">
-	import Button from '@gitbutler/ui/Button.svelte';
-	import FileIcon from '@gitbutler/ui/file/FileIcon.svelte';
-	import HunkDiffBody from '@gitbutler/ui/hunkDiff/HunkDiffBody.svelte';
+	import { Button, FileIcon, HunkDiffBody } from '@gitbutler/ui';
 	import type { ContentSection } from '@gitbutler/ui/utils/diffParsing';
 
 	interface Props {
@@ -27,7 +25,7 @@
 
 	<div class="chat-message__diff-content">
 		<table class="table__section">
-			<HunkDiffBody filePath={diffPath} {content} />
+			<HunkDiffBody wrapText filePath={diffPath} {content} />
 		</table>
 	</div>
 </div>
@@ -36,12 +34,13 @@
 	.chat-message__diff-section {
 		display: flex;
 		flex-direction: column;
+		align-self: stretch;
+		min-width: 0;
 		padding: 6px;
 		gap: 8px;
-		align-self: stretch;
+		border: 1px solid var(--clr-border-2);
 
 		border-radius: var(--radius-m);
-		border: 1px solid var(--clr-border-2);
 		background: var(--clr-bg-1);
 	}
 
@@ -71,13 +70,14 @@
 
 	.chat-message__diff-content {
 		overflow: hidden;
-		border-radius: var(--radius-m);
 		border: 1px solid var(--clr-diff-count-border);
+		border-radius: var(--radius-m);
 	}
 
 	table,
 	.table__section {
 		width: 100%;
+		min-width: 0;
 		border-collapse: separate;
 		border-spacing: 0;
 	}

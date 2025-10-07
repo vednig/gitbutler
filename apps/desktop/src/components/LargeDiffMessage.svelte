@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Button from '@gitbutler/ui/Button.svelte';
+	import { Button, TestId } from '@gitbutler/ui';
 
 	interface Props {
 		showFrame?: boolean;
@@ -13,17 +13,17 @@
 	}
 </script>
 
-<div class="large-diff-message" class:frame-box={showFrame}>
+<div data-testid={TestId.LargeDiffMessage} class="large-diff-message" class:frame-box={showFrame}>
 	<p class="text-13">Change hidden as large diffs may slow down the UI</p>
-	<Button kind="outline" onclick={show}>Show anyways</Button>
+	<Button testId={TestId.LargeDiffMessageButton} kind="outline" onclick={show}>Show anyways</Button>
 </div>
 
 <style>
 	.large-diff-message {
 		display: flex;
+		flex-direction: column;
 		padding: 12px;
 		gap: 12px;
-		flex-direction: column;
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
 	}

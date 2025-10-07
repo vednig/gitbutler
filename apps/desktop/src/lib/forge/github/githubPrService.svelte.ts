@@ -3,8 +3,8 @@ import {
 	ghResponseToInstance,
 	parseGitHubDetailedPullRequest,
 	type CreatePrResult,
-	type MergeResult,
-	type UpdateResult
+	type DetailedGitHubPullRequestWithPermissions,
+	type GitHubRepoPermissions
 } from '$lib/forge/github/types';
 import {
 	MergeMethod,
@@ -12,7 +12,8 @@ import {
 	type DetailedPullRequest,
 	type PullRequest
 } from '$lib/forge/interface/types';
-import { ReduxTag } from '$lib/state/tags';
+import { eventualConsistencyCheck } from '$lib/forge/shared/progressivePolling';
+import { providesItem, invalidatesItem, ReduxTag, invalidatesList } from '$lib/state/tags';
 import { sleep } from '$lib/utils/sleep';
 import { writable } from 'svelte/store';
 import type { PostHogWrapper } from '$lib/analytics/posthog';
@@ -22,6 +23,7 @@ import type { GitHubApi } from '$lib/state/clientState.svelte';
 import type { StartQueryActionCreatorOptions } from '@reduxjs/toolkit/query';
 
 export class GitHubPrService implements ForgePrService {
+	readonly unit = { name: 'Pull request', abbr: 'PR', symbol: '#' };
 	loading = writable(false);
 	private api: ReturnType<typeof injectEndpoints>;
 
@@ -41,14 +43,15 @@ export class GitHubPrService implements ForgePrService {
 	}: CreatePullRequestArgs): Promise<PullRequest> {
 		this.loading.set(true);
 		const request = async () => {
-			const result = await this.api.endpoints.createPr.mutate({
-				head: upstreamName,
-				base: baseBranchName,
-				title,
-				body,
-				draft
-			});
-			return ghResponseToInstance(result);
+			return ghResponseToInstance(
+				await this.api.endpoints.createPr.mutate({
+					head: upstreamName,
+					base: baseBranchName,
+					title,
+					body,
+					draft
+				})
+			);
 		};
 
 		let attempts = 0;
@@ -69,25 +72,25 @@ export class GitHubPrService implements ForgePrService {
 				this.loading.set(false);
 			}
 		}
+		this.posthog?.capture('PR Failure');
 		throw lastError;
 	}
 
 	async fetch(number: number, options?: QueryOptions) {
-		const result = $derived(this.api.endpoints.getPr.fetch({ number }, options));
+		const result = this.api.endpoints.getPr.fetch({ number }, options);
 		return await result;
 	}
 
 	get(number: number, options?: StartQueryActionCreatorOptions) {
-		const result = $derived(this.api.endpoints.getPr.useQuery({ number }, options));
-		return result;
+		return this.api.endpoints.getPr.useQuery({ number }, options);
 	}
 
 	async merge(method: MergeMethod, number: number) {
-		return await this.api.endpoints.mergePr.mutate({ method, number });
+		await this.api.endpoints.mergePr.mutate({ method, number });
 	}
 
 	async reopen(number: number) {
-		return await this.api.endpoints.updatePr.mutate({
+		await this.api.endpoints.updatePr.mutate({
 			number,
 			update: { state: 'open' }
 		});
@@ -97,7 +100,35 @@ export class GitHubPrService implements ForgePrService {
 		number: number,
 		update: { description?: string; state?: 'open' | 'closed'; targetBase?: string }
 	) {
-		return await this.api.endpoints.updatePr.mutate({ number, update });
+		await this.api.endpoints.updatePr.mutate({ number, update });
+	}
+}
+
+async function fetchRepoPermissions(
+	owner: string,
+	repo: string,
+	extra: unknown
+): Promise<GitHubRepoPermissions | undefined> {
+	try {
+		const repoResponse = await ghQuery(
+			{
+				domain: 'repos',
+				action: 'get',
+				parameters: { owner, repo },
+				extra: extra
+			},
+			extra,
+			'required'
+		);
+
+		if (repoResponse.error) {
+			throw repoResponse.error;
+		}
+
+		return repoResponse.data.permissions;
+	} catch (err) {
+		console.error(`Exception fetching repository permissions for ${owner}/${repo}:`, err);
+		return undefined;
 	}
 }
 
@@ -105,16 +136,50 @@ function injectEndpoints(api: GitHubApi) {
 	return api.injectEndpoints({
 		endpoints: (build) => ({
 			getPr: build.query<DetailedPullRequest, { number: number }>({
-				queryFn: async (args, api) =>
-					parseGitHubDetailedPullRequest(
-						await ghQuery({
+				queryFn: async (args, api) => {
+					async function getPrByNumber() {
+						return await ghQuery({
 							domain: 'pulls',
 							action: 'get',
 							parameters: { pull_number: args.number },
 							extra: api.extra
-						})
-					),
-				providesTags: [ReduxTag.PullRequests]
+						});
+					}
+
+					const prResponse = await eventualConsistencyCheck(getPrByNumber, (response) => {
+						if (response.error) {
+							// Stop if there's an error
+							return true;
+						}
+						// Stop if we have a valid response
+						return response.data?.updated_at !== undefined;
+					});
+
+					if (prResponse.error) {
+						return { error: prResponse.error };
+					}
+
+					const prData = prResponse.data;
+					const owner = prData.base?.repo?.owner?.login;
+					const repo = prData.base?.repo?.name;
+
+					const permissions =
+						owner && repo ? await fetchRepoPermissions(owner, repo, api.extra) : undefined;
+
+					const combinedData: DetailedGitHubPullRequestWithPermissions = {
+						...prData,
+						permissions
+					};
+
+					const finalResult = parseGitHubDetailedPullRequest({ data: combinedData });
+
+					if (finalResult.error) {
+						return { error: finalResult.error };
+					}
+
+					return { data: finalResult.data };
+				},
+				providesTags: (_result, _error, args) => providesItem(ReduxTag.PullRequests, args.number)
 			}),
 			createPr: build.mutation<
 				CreatePrResult,
@@ -127,20 +192,27 @@ function injectEndpoints(api: GitHubApi) {
 						parameters: { head, base, title, body, draft },
 						extra: api.extra
 					}),
-				invalidatesTags: [ReduxTag.PullRequests]
+				invalidatesTags: (result) => [invalidatesItem(ReduxTag.PullRequests, result?.number)]
 			}),
-			mergePr: build.mutation<MergeResult, { number: number; method: MergeMethod }>({
-				queryFn: async ({ number, method: method }, api) =>
-					await ghQuery({
+			mergePr: build.mutation<void, { number: number; method: MergeMethod }>({
+				queryFn: async ({ number, method: method }, api) => {
+					const result = await ghQuery({
 						domain: 'pulls',
 						action: 'merge',
 						parameters: { pull_number: number, merge_method: method },
 						extra: api.extra
-					}),
-				invalidatesTags: [ReduxTag.PullRequests]
+					});
+
+					if (result.error) {
+						return { error: result.error };
+					}
+
+					return { data: undefined };
+				},
+				invalidatesTags: [invalidatesList(ReduxTag.PullRequests)]
 			}),
 			updatePr: build.mutation<
-				UpdateResult,
+				void,
 				{
 					number: number;
 					update: {
@@ -150,14 +222,24 @@ function injectEndpoints(api: GitHubApi) {
 					};
 				}
 			>({
-				queryFn: async ({ number, update }, api) =>
-					await ghQuery({
+				queryFn: async ({ number, update }, api) => {
+					const result = await ghQuery({
 						domain: 'pulls',
 						action: 'update',
-						parameters: { pull_number: number, ...update },
+						parameters: {
+							pull_number: number,
+							target_base: update.targetBase,
+							body: update.description,
+							state: update.state
+						},
 						extra: api.extra
-					}),
-				invalidatesTags: [ReduxTag.PullRequests]
+					});
+					if (result.error) {
+						return { error: result.error };
+					}
+					return { data: undefined };
+				},
+				invalidatesTags: [invalidatesList(ReduxTag.PullRequests)]
 			})
 		})
 	});

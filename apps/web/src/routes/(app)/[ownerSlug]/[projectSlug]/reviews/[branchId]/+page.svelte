@@ -1,42 +1,45 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import BranchCommitsTable from '$lib/components/changes/BranchCommitsTable.svelte';
 	import PrivateProjectError from '$lib/components/errors/PrivateProjectError.svelte';
 	import Factoid from '$lib/components/infoFlexRow/Factoid.svelte';
 	import InfoFlexRow from '$lib/components/infoFlexRow/InfoFlexRow.svelte';
-	import Minimap from '$lib/components/review/Minimap.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
 	import { updateFavIcon } from '$lib/utils/faviconUtils';
-	import { UserService } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
 	import BranchStatusBadge from '@gitbutler/shared/branches/BranchStatusBadge.svelte';
-	import { BranchService } from '@gitbutler/shared/branches/branchService';
+	import Minimap from '@gitbutler/shared/branches/Minimap.svelte';
+	import { BRANCH_SERVICE } from '@gitbutler/shared/branches/branchService';
 	import { getBranchReview } from '@gitbutler/shared/branches/branchesPreview.svelte';
 	import { lookupLatestBranchUuid } from '@gitbutler/shared/branches/latestBranchLookup.svelte';
-	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
+	import { LATEST_BRANCH_LOOKUP_SERVICE } from '@gitbutler/shared/branches/latestBranchLookupService';
 	import { BranchStatus, type Branch } from '@gitbutler/shared/branches/types';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { getContext } from '@gitbutler/shared/context';
 	import { getContributorsWithAvatars } from '@gitbutler/shared/contributors';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { isFound, and, isError, map } from '@gitbutler/shared/network/loadable';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
+	import { APP_STATE } from '@gitbutler/shared/redux/store.svelte';
 	import {
-		WebRoutesService,
+		WEB_ROUTES_SERVICE,
 		type ProjectReviewParameters
 	} from '@gitbutler/shared/routing/webRoutes.svelte';
-	import { UploadsService } from '@gitbutler/shared/uploads/uploadsService';
-	import AsyncButton from '@gitbutler/ui/AsyncButton.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import RichTextEditor from '@gitbutler/ui/RichTextEditor.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
-	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
+	import { UPLOADS_SERVICE } from '@gitbutler/shared/uploads/uploadsService';
+
+	import {
+		AsyncButton,
+		AvatarGroup,
+		Button,
+		Link,
+		Markdown,
+		RichTextEditor,
+		Textarea,
+		chipToasts
+	} from '@gitbutler/ui';
 	import FileUploadPlugin, {
 		type DropFileResult
 	} from '@gitbutler/ui/richText/plugins/FileUpload.svelte';
-	import toasts from '@gitbutler/ui/toasts';
+	import { copyToClipboard } from '@gitbutler/ui/utils/clipboard';
 	import dayjs from 'dayjs';
 	import relativeTime from 'dayjs/plugin/relativeTime';
-	import { goto } from '$app/navigation';
 
 	const ACCEPTED_FILE_TYPES = ['image/*', 'application/*', 'text/*', 'audio/*', 'video/*'];
 
@@ -48,12 +51,12 @@
 
 	let { data }: Props = $props();
 
-	const latestBranchLookupService = getContext(LatestBranchLookupService);
-	const branchService = getContext(BranchService);
-	const appState = getContext(AppState);
-	const routes = getContext(WebRoutesService);
-	const userService = getContext(UserService);
-	const uploadsService = getContext(UploadsService);
+	const latestBranchLookupService = inject(LATEST_BRANCH_LOOKUP_SERVICE);
+	const branchService = inject(BRANCH_SERVICE);
+	const appState = inject(APP_STATE);
+	const routes = inject(WEB_ROUTES_SERVICE);
+	const userService = inject(USER_SERVICE);
+	const uploadsService = inject(UPLOADS_SERVICE);
 	const user = $derived(userService.user);
 
 	const branchUuid = $derived(
@@ -144,7 +147,7 @@
 				title: title,
 				description: summary
 			});
-			toasts.success('Updated review status');
+			chipToasts.success('Updated review status');
 		} finally {
 			editingSummary = false;
 		}
@@ -156,7 +159,7 @@
 		await branchService.updateBranch(branch.current.value.uuid, {
 			status
 		});
-		toasts.success('Saved review summary');
+		chipToasts.success('Saved review summary');
 	}
 
 	function copyLocation() {
@@ -247,16 +250,20 @@
 					<InfoFlexRow>
 						<Factoid label="Status"><BranchStatusBadge {branch} /></Factoid>
 						<Factoid label="Commits">
-							<Minimap
-								branchUuid={branch.uuid}
-								ownerSlug={data.ownerSlug}
-								projectSlug={data.projectSlug}
-								horizontal
-							/>
+							{#if $user}
+								<Minimap
+									branchUuid={branch.uuid}
+									ownerSlug={data.ownerSlug}
+									projectSlug={data.projectSlug}
+									horizontal
+									user={$user}
+								/>
+							{/if}
 						</Factoid>
 						{#if branch.forgeUrl}
 							<Factoid label="PR"
-								><Link href={branch.forgeUrl}>{branch.forgeDescription || '#unknown'}</Link
+								><Link href={branch.forgeUrl} target="_blank"
+									>{branch.forgeDescription || '#unknown'}</Link
 								></Factoid
 							>
 						{/if}
@@ -281,7 +288,7 @@
 									onError={console.error}
 									styleContext="chat-input"
 									initialText={branch.description}
-									onChange={(text) => (summary = text)}
+									onInput={(text) => (summary = text)}
 								>
 									{#snippet plugins()}
 										<FileUploadPlugin onDrop={handleDropFiles} />
@@ -304,9 +311,9 @@
 							{/if}
 						{:else}
 							<div class="summary-placeholder">
-								<p class="text-13 text-clr2">No summary provided.</p>
+								<p class="text-13 clr-text-2">No summary provided.</p>
 								{#if branch.permissions.canWrite}
-									<p class="text-12 text-body text-clr2">
+									<p class="text-12 text-body clr-text-2">
 										<em>
 											Summaries provide context on the branch's purpose and helps team members
 											understand it's changes.
@@ -333,17 +340,17 @@
 		gap: var(--layout-col-gap);
 
 		@media (--desktop-small-viewport) {
-			grid-template-columns: unset;
 			display: flex;
+			grid-template-columns: unset;
 			flex-direction: column;
 		}
 	}
 
 	.information {
 		display: flex;
-		gap: 24px;
 		flex-direction: column;
 		padding-right: 20px;
+		gap: 24px;
 
 		@media (--tablet-viewport) {
 			padding-right: 0;
@@ -352,8 +359,8 @@
 
 	.heading {
 		display: flex;
-		gap: 16px;
 		flex-direction: column;
+		gap: 16px;
 	}
 
 	.summary {
@@ -363,11 +370,11 @@
 	}
 
 	.summary-text {
-		line-height: 160%;
+		padding: 12px;
 		border: 1px solid #ddd;
 		border-radius: 9px;
-		padding: 12px;
 		background-color: #fff;
+		line-height: 160%;
 	}
 
 	.summary-placeholder {
@@ -379,9 +386,9 @@
 
 	.summary-wrapper {
 		flex-shrink: 0;
-		background-color: var(--clr-bg-1);
 		padding: 6px;
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
+		background-color: var(--clr-bg-1);
 	}
 </style>

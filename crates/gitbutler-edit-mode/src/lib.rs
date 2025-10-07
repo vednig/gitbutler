@@ -1,33 +1,34 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
-use bstr::ByteSlice;
+use bstr::{BString, ByteSlice};
+use but_core::TreeChange;
+use but_workspace::{stack_ext::StackExt, StackId};
 use git2::build::CheckoutBuilder;
-use gitbutler_branch_actions::internal::list_virtual_branches;
-use gitbutler_branch_actions::{update_workspace_commit, RemoteBranchFile};
+use gitbutler_branch_actions::update_workspace_commit;
 use gitbutler_cherry_pick::{ConflictedTreeKey, RepositoryExt as _};
-use gitbutler_command_context::{gix_repository_for_merging, CommandContext};
+use gitbutler_command_context::{gix_repo_for_merging, CommandContext};
 use gitbutler_commit::{
     commit_ext::CommitExt,
     commit_headers::{CommitHeadersV2, HasCommitHeaders},
 };
-use gitbutler_diff::hunks_by_filepath;
 use gitbutler_operating_modes::{
     operating_mode, read_edit_mode_metadata, write_edit_mode_metadata, EditModeMetadata,
     OperatingMode, EDIT_BRANCH_REF, WORKSPACE_BRANCH_REF,
 };
-use gitbutler_oxidize::{git2_to_gix_object_id, gix_to_git2_index, GixRepositoryExt};
+use gitbutler_oxidize::{
+    git2_to_gix_object_id, gix_to_git2_index, GixRepositoryExt, ObjectIdExt, OidExt, RepoExt,
+};
 use gitbutler_project::access::{WorktreeReadPermission, WorktreeWritePermission};
-use gitbutler_reference::{ReferenceName, Refname};
-use gitbutler_repo::{rebase::cherry_rebase, RepositoryExt};
+use gitbutler_repo::RepositoryExt;
 use gitbutler_repo::{signature, SignaturePurpose};
-use gitbutler_stack::{Stack, VirtualBranchesHandle};
-use gitbutler_workspace::{checkout_branch_trees, compute_updated_branch_head, BranchHeadAndTree};
+use gitbutler_stack::VirtualBranchesHandle;
+use gitbutler_workspace::branch_trees::{update_uncommited_changes_with_tree, WorkspaceState};
 use serde::Serialize;
 
 pub mod commands;
+
+const UNCOMMITTED_CHANGES_REF: &str = "refs/gitbutler/edit-uncommitted-changes";
 
 /// Returns an index of the the tree of `commit` if it is unconflicted, *or* produce a merged tree
 /// if `commit` is conflicted. That tree is turned into an index that records the conflicts that occurred
@@ -49,7 +50,7 @@ fn get_commit_index(repository: &git2::Repository, commit: &git2::Commit) -> Res
             .context("Failed to get base")?
             .id();
 
-        let gix_repo = gix_repository_for_merging(repository.path())?;
+        let gix_repo = gix_repo_for_merging(repository.path())?;
         // Merge without favoring a side this time to get a tree containing the actual conflicts.
         let mut merge_result = gix_repo.merge_trees(
             git2_to_gix_object_id(base),
@@ -124,6 +125,22 @@ fn find_or_create_base_commit<'a>(
     Ok(repository.find_commit(base)?)
 }
 
+fn commit_uncommited_changes(ctx: &CommandContext) -> Result<()> {
+    let repository = ctx.repo();
+    let uncommited_changes = repository.create_wd_tree(0)?;
+    repository.reference(UNCOMMITTED_CHANGES_REF, uncommited_changes.id(), true, "")?;
+    Ok(())
+}
+
+fn get_uncommited_changes(ctx: &CommandContext) -> Result<git2::Oid> {
+    let repository = ctx.repo();
+    let uncommited_changes = repository
+        .find_reference(UNCOMMITTED_CHANGES_REF)?
+        .peel_to_tree()?
+        .id();
+    Ok(uncommited_changes)
+}
+
 fn checkout_edit_branch(ctx: &CommandContext, commit: git2::Commit) -> Result<()> {
     let repository = ctx.repo();
 
@@ -149,47 +166,22 @@ fn checkout_edit_branch(ctx: &CommandContext, commit: git2::Commit) -> Result<()
     Ok(())
 }
 
-fn find_virtual_branch_by_reference(
-    ctx: &CommandContext,
-    reference: &ReferenceName,
-) -> Result<Option<Stack>> {
-    let vb_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
-    let all_stacks = vb_state
-        .list_stacks_in_workspace()
-        .context("Failed to read virtual branches")?;
-
-    Ok(all_stacks.into_iter().find(|virtual_branch| {
-        let Ok(refname) = virtual_branch.refname() else {
-            return false;
-        };
-
-        let Ok(checked_out_refname) = Refname::from_str(reference) else {
-            return false;
-        };
-
-        checked_out_refname == refname.into()
-    }))
-}
-
 pub(crate) fn enter_edit_mode(
     ctx: &CommandContext,
     commit: git2::Commit,
-    branch: &git2::Reference,
+    stack_id: StackId,
     _perm: &mut WorktreeWritePermission,
 ) -> Result<EditModeMetadata> {
-    let Some(branch_reference) = branch.name() else {
-        bail!("Failed to get branch reference name");
-    };
-
     let edit_mode_metadata = EditModeMetadata {
         commit_oid: commit.id(),
-        branch_reference: branch_reference.to_string().into(),
+        stack_id,
     };
 
-    if find_virtual_branch_by_reference(ctx, &edit_mode_metadata.branch_reference)?.is_none() {
-        bail!("Can not enter edit mode for a reference which does not have a cooresponding virtual branch")
-    }
+    let vb_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
+    // Validate the stack_id
+    vb_state.get_stack_in_workspace(stack_id)?;
 
+    commit_uncommited_changes(ctx)?;
     write_edit_mode_metadata(ctx, &edit_mode_metadata).context("Failed to persist metadata")?;
     checkout_edit_branch(ctx, commit).context("Failed to checkout edit branch")?;
 
@@ -198,7 +190,7 @@ pub(crate) fn enter_edit_mode(
 
 pub(crate) fn abort_and_return_to_workspace(
     ctx: &CommandContext,
-    perm: &mut WorktreeWritePermission,
+    _perm: &mut WorktreeWritePermission,
 ) -> Result<()> {
     let repository = ctx.repo();
 
@@ -207,7 +199,13 @@ pub(crate) fn abort_and_return_to_workspace(
         .set_head(WORKSPACE_BRANCH_REF)
         .context("Failed to set head reference")?;
 
-    checkout_branch_trees(ctx, perm)?;
+    let uncommited_changes = get_uncommited_changes(ctx)?;
+    let uncommited_changes = repository.find_tree(uncommited_changes)?;
+
+    repository.checkout_tree(
+        uncommited_changes.as_object(),
+        Some(CheckoutBuilder::new().force().remove_untracked(true)),
+    )?;
 
     Ok(())
 }
@@ -220,20 +218,21 @@ pub(crate) fn save_and_return_to_workspace(
     let repository = ctx.repo();
     let vb_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
 
+    let old_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
+
     // Get important references
     let commit = repository
         .find_commit(edit_mode_metadata.commit_oid)
         .context("Failed to find commit")?;
 
-    let Some(mut virtual_branch) =
-        find_virtual_branch_by_reference(ctx, &edit_mode_metadata.branch_reference)?
-    else {
-        bail!("Failed to find virtual branch for this reference. Entering and leaving edit mode for non-virtual branches is unsupported")
-    };
+    let mut stack = vb_state.get_stack_in_workspace(edit_mode_metadata.stack_id)?;
 
     let parents = commit.parents().collect::<Vec<_>>();
 
     // Write out all the changes, including unstaged changes to a tree for re-committing
+    let mut index = repository.index()?;
+    index.add_all(["*"], git2::IndexAddOption::DEFAULT, None)?;
+    index.write()?;
     let tree = repository.create_wd_tree(0)?;
 
     let (_, committer) = repository.signatures()?;
@@ -256,28 +255,50 @@ pub(crate) fn save_and_return_to_workspace(
         )
         .context("Failed to commit new commit")?;
 
-    // Rebase all all commits on top of the new commit and update reference
-    let new_branch_head = cherry_rebase(ctx, new_commit_oid, commit.id(), virtual_branch.head())
-        .context("Failed to rebase commits onto new commit")?
-        .unwrap_or(new_commit_oid);
+    let gix_repo = repository.to_gix()?;
 
-    // Update virtual_branch
-    let BranchHeadAndTree {
-        head: new_branch_head,
-        tree: new_branch_tree,
-    } = compute_updated_branch_head(repository, &virtual_branch, new_branch_head)?;
+    let mut steps = stack.as_rebase_steps(ctx, &gix_repo)?;
+    // swap out the old commit with the new, updated one
+    steps.iter_mut().for_each(|step| {
+        if let but_rebase::RebaseStep::Pick { commit_id, .. } = step {
+            if commit.id() == commit_id.to_git2() {
+                *commit_id = new_commit_oid.to_gix();
+            }
+        }
+    });
+    let merge_base = stack.merge_base(ctx)?;
+    let mut rebase = but_rebase::Rebase::new(&gix_repo, Some(merge_base), None)?;
+    rebase.rebase_noops(false);
+    rebase.steps(steps)?;
+    let output = rebase.rebase()?;
 
-    virtual_branch.set_stack_head(ctx, new_branch_head, Some(new_branch_tree))?;
+    stack.set_heads_from_rebase_output(ctx, output.references)?;
 
     // Switch branch to gitbutler/workspace
     repository
         .set_head(WORKSPACE_BRANCH_REF)
         .context("Failed to set head reference")?;
+    repository.checkout_head(Some(CheckoutBuilder::new().force()))?;
 
-    // Checkout the applied branches
-    checkout_branch_trees(ctx, perm)?;
     update_workspace_commit(&vb_state, ctx)?;
-    list_virtual_branches(ctx, perm)?;
+
+    let new_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
+    let uncommtied_changes = get_uncommited_changes(ctx)?;
+
+    update_uncommited_changes_with_tree(
+        ctx,
+        old_workspace,
+        new_workspace,
+        Some(uncommtied_changes),
+        Some(true),
+        perm,
+    )?;
+
+    // Currently if the index goes wonky then files don't appear quite right.
+    // This just makes sure the index is all good.
+    let mut index = repository.index()?;
+    index.read_tree(&repository.head()?.peel_to_tree()?)?;
+    index.write()?;
 
     Ok(())
 }
@@ -293,7 +314,7 @@ pub struct ConflictEntryPresence {
 pub(crate) fn starting_index_state(
     ctx: &CommandContext,
     _perm: &WorktreeReadPermission,
-) -> Result<Vec<(RemoteBranchFile, Option<ConflictEntryPresence>)>> {
+) -> Result<Vec<(TreeChange, Option<ConflictEntryPresence>)>> {
     let OperatingMode::Edit(metadata) = operating_mode(ctx) else {
         bail!("Starting index state can only be fetched while in edit mode")
     };
@@ -302,7 +323,7 @@ pub(crate) fn starting_index_state(
 
     let commit = repository.find_commit(metadata.commit_oid)?;
     let commit_parent_tree = if commit.is_conflicted() {
-        repository.find_real_tree(&commit, ConflictedTreeKey::Ours)?
+        repository.find_real_tree(&commit, ConflictedTreeKey::Base)?
     } else {
         commit.parent(0)?.tree()?
     };
@@ -321,7 +342,7 @@ pub(crate) fn starting_index_state(
                 .as_ref()
                 .or(conflict.our.as_ref())
                 .or(conflict.their.as_ref())
-                .map(|entry| PathBuf::from(entry.path.to_str_lossy().to_string()))?;
+                .map(|entry| BString::new(entry.path.clone()))?;
 
             Some((
                 path,
@@ -332,14 +353,44 @@ pub(crate) fn starting_index_state(
                 },
             ))
         })
-        .collect::<HashMap<PathBuf, ConflictEntryPresence>>();
+        .collect::<HashMap<BString, ConflictEntryPresence>>();
 
-    let diff = repository.diff_tree_to_index(Some(&commit_parent_tree), Some(&index), None)?;
+    let gix_repo = ctx.gix_repo()?;
 
-    let diff_files = hunks_by_filepath(Some(repository), &diff)?
+    let (tree_changes, _) = but_core::diff::tree_changes(
+        &gix_repo,
+        Some(commit_parent_tree.id().to_gix()),
+        repository
+            .find_real_tree(&commit, ConflictedTreeKey::Theirs)?
+            .id()
+            .to_gix(),
+    )?;
+
+    let outcome = tree_changes
         .into_iter()
-        .map(|(path, file)| (file.into(), conflicts.get(&path).cloned()))
+        .map(|tc| (tc.clone(), conflicts.get(&tc.path).cloned()))
         .collect();
 
-    Ok(diff_files)
+    Ok(outcome)
+}
+
+pub(crate) fn changes_from_initial(
+    ctx: &CommandContext,
+    _perm: &WorktreeReadPermission,
+) -> Result<Vec<TreeChange>> {
+    let OperatingMode::Edit(metadata) = operating_mode(ctx) else {
+        bail!("Starting index state can only be fetched while in edit mode")
+    };
+
+    let repository = ctx.repo();
+    let commit = repository.find_commit(metadata.commit_oid)?;
+    let base = repository
+        .find_real_tree(&commit, Default::default())?
+        .id()
+        .to_gix();
+    let head = repository.create_wd_tree(0)?.id().to_gix();
+
+    let gix_repo = ctx.gix_repo()?;
+    let (tree_changes, _) = but_core::diff::tree_changes(&gix_repo, Some(base), head)?;
+    Ok(tree_changes)
 }

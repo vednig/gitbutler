@@ -1,6 +1,6 @@
-use std::{env, fs};
-
 use anyhow::Context;
+use but_api::error::Error;
+use but_settings::AppSettingsWithDiskSync;
 use gitbutler_error::error::{self, Code};
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
@@ -10,8 +10,6 @@ use tauri::{
     AppHandle, Manager, Runtime, WebviewWindow,
 };
 use tracing::instrument;
-
-use crate::error::Error;
 
 static SHORTCUT_EVENT: &str = "menu://shortcut";
 
@@ -26,7 +24,7 @@ pub fn menu_item_set_enabled(handle: AppHandle, id: &str, enabled: bool) -> Resu
         .menu()
         .context("menu not found")?
         .get(id)
-        .with_context(|| error::Context::new(format!("menu item not found: {}", id)))?;
+        .with_context(|| error::Context::new(format!("menu item not found: {id}")))?;
 
     menu_item
         .as_menuitem()
@@ -37,28 +35,10 @@ pub fn menu_item_set_enabled(handle: AppHandle, id: &str, enabled: bool) -> Resu
     Ok(())
 }
 
-#[tauri::command()]
-pub fn get_editor_link_scheme() -> &'static str {
-    let vscodium_installed = check_if_installed("codium");
-    if vscodium_installed {
-        "vscodium"
-    } else {
-        // Fallback to vscode, as it was the previous behavior
-        "vscode"
-    }
-}
-
-fn check_if_installed(executable_name: &str) -> bool {
-    match env::var_os("PATH") {
-        Some(env_path) => env::split_paths(&env_path).any(|mut path| {
-            path.push(executable_name);
-            fs::metadata(path).is_ok()
-        }),
-        None => false,
-    }
-}
-
-pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
+pub fn build<R: Runtime>(
+    handle: &AppHandle<R>,
+    #[cfg_attr(target_os = "linux", allow(unused_variables))] settings: &AppSettingsWithDiskSync,
+) -> tauri::Result<tauri::menu::Menu<R>> {
     let check_for_updates =
         MenuItemBuilder::with_id("global/update", "Check for updates…").build(handle)?;
 
@@ -111,14 +91,20 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
     #[cfg(not(target_os = "linux"))]
     let edit_menu = &Submenu::new(handle, "Edit", true)?;
 
-    #[cfg(target_os = "macos")]
-    {
+    // For now, only on MacOS. Once mainstream, we'd have to set the accelerators correctly and test it more.
+    #[cfg(not(target_os = "linux"))]
+    if settings.get()?.feature_flags.undo && cfg!(target_os = "macos") {
         edit_menu.append_items(&[
-            &PredefinedMenuItem::undo(handle, None)?,
-            &PredefinedMenuItem::redo(handle, None)?,
+            &MenuItemBuilder::with_id("edit/undo", "Undo")
+                .accelerator("CmdOrCtrl+Z")
+                .build(handle)?,
+            &MenuItemBuilder::with_id("edit/redo", "Redo")
+                .accelerator("CmdOrCtrl+Shift+Z")
+                .build(handle)?,
             &PredefinedMenuItem::separator(handle)?,
         ])?;
     }
+
     #[cfg(not(target_os = "linux"))]
     {
         edit_menu.append_items(&[
@@ -165,13 +151,34 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
             .build(handle)?,
     ])?;
 
-    let project_menu = &SubmenuBuilder::new(handle, "Project")
+    let mut project_menu_builder = SubmenuBuilder::new(handle, "Project")
         .item(
-            &MenuItemBuilder::with_id("project/history", "Project History")
+            &MenuItemBuilder::with_id("project/history", "Operations History")
                 .accelerator("CmdOrCtrl+Shift+H")
                 .build(handle)?,
         )
-        .text("project/open-in-vscode", "Open in Editor")
+        .separator()
+        .text("project/open-in-vscode", "Open in Editor");
+
+    #[cfg(target_os = "macos")]
+    {
+        project_menu_builder =
+            project_menu_builder.text("project/show-in-finder", "Show in Finder");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        project_menu_builder =
+            project_menu_builder.text("project/show-in-finder", "Show in Explorer");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        project_menu_builder =
+            project_menu_builder.text("project/show-in-finder", "Show in File Manager");
+    }
+
+    let project_menu = &project_menu_builder
         .separator()
         .text("project/settings", "Project Settings")
         .build()?;
@@ -186,22 +193,25 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
         ])
         .build()?;
 
-    let help_menu = &SubmenuBuilder::new(handle, "Help")
+    let mut help_menu = SubmenuBuilder::new(handle, "Help")
         .text("help/documentation", "Documentation")
         .text("help/github", "Source Code")
         .text("help/release-notes", "Release Notes")
-        .separator()
+        .separator();
+    help_menu = help_menu
         .item(
             &MenuItemBuilder::with_id("help/keyboard-shortcuts", "Keyboard Shortcuts")
                 .accelerator("CmdOrCtrl+/")
                 .build(handle)?,
         )
-        .separator()
+        .separator();
+    let help_menu = help_menu
         .text("help/share-debug-info", "Share Debug Info…")
         .text("help/report-issue", "Report an Issue…")
         .separator()
         .text("help/discord", "Discord")
         .text("help/youtube", "YouTube")
+        .text("help/bluesky", "Bluesky")
         .text("help/x", "X")
         .separator()
         .item(
@@ -226,12 +236,25 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<tauri::menu::Me
             project_menu,
             #[cfg(target_os = "macos")]
             window_menu,
-            help_menu,
+            &help_menu,
         ],
     )
 }
 
-pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
+/// `handle` is needed to access the undo queue, and buttons for that are only available when the `undo` feature is enabled.
+pub fn handle_event<R: Runtime>(
+    _handle: &AppHandle<R>,
+    webview: &WebviewWindow,
+    event: &MenuEvent,
+) {
+    if event.id() == "edit/undo" {
+        eprintln!("use app undo queue to undo.");
+        return;
+    }
+    if event.id() == "edit/redo" {
+        eprintln!("use app undo queue to redo.");
+        return;
+    }
     if event.id() == "file/add-local-repo" {
         emit(webview, "menu://shortcut", "add-local-repo");
         return;
@@ -285,7 +308,7 @@ pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
     }
 
     if event.id() == "help/share-debug-info" {
-        emit(webview, SHORTCUT_EVENT, "share-debug");
+        emit(webview, SHORTCUT_EVENT, "share-debug-info");
         return;
     }
 
@@ -296,6 +319,11 @@ pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
 
     if event.id() == "project/open-in-vscode" {
         emit(webview, SHORTCUT_EVENT, "open-in-vscode");
+        return;
+    }
+
+    if event.id() == "project/show-in-finder" {
+        emit(webview, SHORTCUT_EVENT, "show-in-finder");
         return;
     }
 
@@ -331,6 +359,7 @@ pub fn handle_event(webview: &WebviewWindow, event: &MenuEvent) {
             }
             "help/discord" => open::that("https://discord.com/invite/MmFkmaJ42D"),
             "help/youtube" => open::that("https://www.youtube.com/@gitbutlerapp"),
+            "help/bluesky" => open::that("https://bsky.app/profile/gitbutler.com"),
             "help/x" => open::that("https://x.com/gitbutler"),
             _ => break 'open_link,
         };

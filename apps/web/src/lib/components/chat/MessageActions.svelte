@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { ChatChannelsService } from '@gitbutler/shared/chat/chatChannelsService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
+	import { inject } from '@gitbutler/core/context';
+	import { CHAT_CHANNELS_SERVICE } from '@gitbutler/shared/chat/chatChannelsService';
+
+	import { Button } from '@gitbutler/ui';
 	import type { ChatMessage } from '@gitbutler/shared/chat/types';
 
 	interface Props {
@@ -12,7 +13,7 @@
 
 	const { message, projectId, changeId }: Props = $props();
 
-	const chatChannelService = getContext(ChatChannelsService);
+	const chatChannelService = inject(CHAT_CHANNELS_SERVICE);
 
 	let isResolving = $state<boolean>(false);
 

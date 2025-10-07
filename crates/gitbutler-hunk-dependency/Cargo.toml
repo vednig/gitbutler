@@ -4,10 +4,11 @@ version = "0.0.0"
 edition = "2021"
 authors = ["GitButler <gitbutler@gitbutler.com>"]
 publish = false
+rust-version = "1.89"
 autotests = false
 
 [dependencies]
-anyhow = "1.0.95"
+anyhow = "1.0.100"
 git2.workspace = true
 gitbutler-diff.workspace = true
 gitbutler-serde.workspace = true

@@ -10,6 +10,7 @@ import {
 	type LoadableNotificationSettings,
 	type PatchNotificationSettingsParams
 } from '$lib/settings/types';
+import { InjectionToken } from '@gitbutler/core/context';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
 
@@ -42,7 +43,7 @@ export class NotificationSettingsService {
 					this.appDispatch.dispatch(notificationSettingsTable.upsertOne(notificationSettings));
 				} catch (error: unknown) {
 					this.appDispatch.dispatch(
-						notificationSettingsTable.upsertOne(errorToLoadable(error, NOTIFICATION_SETTINGS_KEY))
+						notificationSettingsTable.addOne(errorToLoadable(error, NOTIFICATION_SETTINGS_KEY))
 					);
 				}
 			})
@@ -60,3 +61,6 @@ export class NotificationSettingsService {
 		await this.refresh();
 	}
 }
+
+export const NOTIFICATION_SETTINGS_SERVICE: InjectionToken<NotificationSettingsService> =
+	new InjectionToken('NotificationSettingsService');

@@ -54,14 +54,13 @@
 	}
 
 	.dynthead-title {
-		text-align: left;
-		color: var(--clr-text-2);
 		padding: var(--cell-padding);
+		color: var(--clr-text-2);
+		text-align: left;
 	}
 
 	/* MODIFIERS */
-	.dynthead_changes,
-	.dynthead_number {
+	.dynthead_changes {
 		text-align: right;
 	}
 </style>

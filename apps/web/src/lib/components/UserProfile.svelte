@@ -1,12 +1,10 @@
 <script lang="ts">
 	import ProjectsSection from '$lib/components/ProjectsSection.svelte';
 	import ReviewsSection from '$lib/components/ReviewsSection.svelte';
-	import { UserService } from '$lib/user/userService';
-	import AsyncButton from '@gitbutler/ui/AsyncButton.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
-	import toasts from '@gitbutler/ui/toasts';
-	import { getContext } from 'svelte';
+	import { UserService, USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
+
+	import { AsyncButton, Button, Markdown, chipToasts } from '@gitbutler/ui';
 	import { get } from 'svelte/store';
 	import type { ExtendedUser } from '$lib/owner/types';
 
@@ -17,7 +15,7 @@
 
 	let { user, ownerSlug }: Props = $props();
 
-	const userService = getContext(UserService) as UserService;
+	const userService = inject(USER_SERVICE) as UserService;
 	const currentUser = userService.user;
 	const isCurrentUser = $derived(get(currentUser)?.login === user.login);
 
@@ -50,9 +48,9 @@
 			};
 
 			editingReadme = false;
-			toasts.success('README updated successfully');
+			chipToasts.success('README updated successfully');
 		} catch (error) {
-			toasts.error(
+			chipToasts.error(
 				`Failed to update README: ${error instanceof Error ? error.message : 'Unknown error'}`
 			);
 		} finally {
@@ -112,12 +110,12 @@
 					{#if isCurrentUser}
 						<div class="readme-actions">
 							{#if editingReadme}
-								<AsyncButton style="primary" action={saveReadme} disabled={isSavingReadme}>
+								<AsyncButton style="pop" action={saveReadme} disabled={isSavingReadme}>
 									Save
 								</AsyncButton>
 								<Button
 									type="button"
-									style="secondary"
+									style="neutral"
 									onclick={cancelEditingReadme}
 									disabled={isSavingReadme}
 								>
@@ -126,7 +124,7 @@
 							{:else}
 								<Button
 									type="button"
-									style="secondary"
+									style="neutral"
 									onclick={() => startEditingReadme(user.readme)}
 								>
 									Edit README
@@ -271,41 +269,41 @@
 	}
 
 	.section-card {
-		background-color: white;
-		border-radius: 8px;
 		margin-bottom: 2rem;
 		overflow: hidden;
 		border: 1px solid color(srgb 0.831373 0.815686 0.807843);
+		border-radius: 8px;
+		background-color: white;
 	}
 
 	.section-title {
-		font-size: 0.8em;
 		margin: 0;
 		padding: 12px 15px;
 		border-bottom: 1px solid color(srgb 0.831373 0.815686 0.807843);
 		background-color: #f3f3f2;
 		color: color(srgb 0.52549 0.494118 0.47451);
+		font-size: 0.8em;
 	}
 
 	.section-title-only {
-		font-size: 0.8em;
 		margin: 0;
 		padding: 12px 15px;
 		color: color(srgb 0.52549 0.494118 0.47451);
+		font-size: 0.8em;
 	}
 
 	.readme-header {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
-		background-color: #f3f3f2;
+		justify-content: space-between;
 		border-bottom: 1px solid color(srgb 0.831373 0.815686 0.807843);
+		background-color: #f3f3f2;
 	}
 
 	.readme-actions {
 		display: flex;
-		gap: 0.5rem;
 		padding-right: 15px;
+		gap: 0.5rem;
 	}
 
 	/* README Section */
@@ -317,29 +315,29 @@
 	.readme-editor {
 		width: 100%;
 		min-height: 200px;
-		padding: 0.75rem;
 		margin-bottom: 1rem;
+		padding: 0.75rem;
 		border: 1px solid var(--border-color, #eaeaea);
 		border-radius: 4px;
-		font-family: monospace;
+		font-family: var(--fontfamily-mono);
 		resize: vertical;
 	}
 
 	.readme-preview {
-		border-top: 1px solid var(--border-color, #eaeaea);
-		padding-top: 1rem;
 		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--border-color, #eaeaea);
 	}
 
 	.preview-title {
-		font-size: 1rem;
 		margin: 0 0 0.75rem 0;
 		color: var(--text-muted, #666);
+		font-size: 1rem;
 	}
 
 	.no-readme {
-		color: #718096;
 		padding: 0.5rem 0;
+		color: #718096;
 		text-align: center;
 	}
 
@@ -356,25 +354,25 @@
 
 	.readme-content :global(ul),
 	.readme-content :global(ol) {
-		padding-left: 1.5rem;
 		margin-bottom: 1rem;
+		padding-left: 1.5rem;
 	}
 
 	.readme-content :global(code) {
-		background-color: #f1f5f9;
 		padding: 0.1rem 0.3rem;
 		border-radius: 3px;
-		font-family: monospace;
+		background-color: #f1f5f9;
 		font-size: 0.9em;
+		font-family: var(--fontfamily-mono);
 	}
 
 	.readme-content :global(pre) {
+		margin: 1rem 0;
+		padding: 1rem;
+		overflow-x: auto;
+		border-radius: 6px;
 		background-color: #1e293b;
 		color: #e2e8f0;
-		padding: 1rem;
-		border-radius: 6px;
-		overflow-x: auto;
-		margin: 1rem 0;
 	}
 
 	/* Organizations */
@@ -405,13 +403,13 @@
 	}
 
 	.org-name {
-		font-weight: 500;
 		color: #2d3748;
+		font-weight: 500;
 	}
 
 	.org-role {
-		font-size: 0.8rem;
 		color: #718096;
+		font-size: 0.8rem;
 	}
 
 	/* Contact Info Styles */
@@ -422,8 +420,8 @@
 	.info-item {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
 		padding: 0.75rem;
+		gap: 0.75rem;
 		border-bottom: 1px solid #e2e8f0;
 	}
 
@@ -437,8 +435,8 @@
 	}
 
 	.info-value {
-		color: #4a5568;
 		overflow: hidden;
+		color: #4a5568;
 		text-overflow: ellipsis;
 	}
 
@@ -456,30 +454,30 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		text-align: center;
 		padding: 1.5rem;
+		text-align: center;
 	}
 
 	.sidebar-avatar {
 		width: 100px;
 		height: 100px;
-		border-radius: 50%;
-		object-fit: cover;
-		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 		margin-bottom: 1rem;
+		object-fit: cover;
+		border-radius: 50%;
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 	}
 
 	.sidebar-name {
-		font-size: 1.5rem;
 		margin: 0;
-		line-height: 1.2;
 		color: #1a202c;
+		font-size: 1.5rem;
+		line-height: 1.2;
 	}
 
 	.sidebar-username {
-		font-size: 1rem;
-		color: #718096;
 		margin: 0.5rem 0 0 0;
+		color: #718096;
+		font-size: 1rem;
 	}
 
 	@media (max-width: 768px) {

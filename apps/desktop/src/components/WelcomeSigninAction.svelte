@@ -1,10 +1,10 @@
 <script lang="ts">
 	import WelcomeAction from '$components/WelcomeAction.svelte';
 	import signinSvg from '$lib/assets/signin.svg?raw';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import LinkButton from '@gitbutler/ui/LinkButton.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, LinkButton } from '@gitbutler/ui';
+
 	import { writable } from 'svelte/store';
 
 	const {
@@ -17,7 +17,7 @@
 
 	const aborted = writable(false);
 
-	const userService = getContext(UserService);
+	const userService = inject(USER_SERVICE);
 	const loading = userService.loading;
 	const user = userService.user;
 </script>
@@ -28,6 +28,7 @@
 		loading={$loading}
 		onclick={async () => {
 			$aborted = false;
+			// TODO: Track login calls
 			await userService.login(aborted);
 		}}
 		rowReverse
@@ -46,16 +47,14 @@
 					await userService.loginAndCopyLink(aborted);
 				}}
 			>
-				the login link
+				login link
 			</LinkButton>
 		{/snippet}
 	</WelcomeAction>
 
 	{#if $loading}
 		<div>
-			<Button kind="outline" onclick={() => ($aborted = true)} loading={$aborted}
-				>Cancel login attempt</Button
-			>
+			<Button kind="outline" onclick={() => ($aborted = true)} loading={$aborted}>Abort</Button>
 		</div>
 	{/if}
 {/if}

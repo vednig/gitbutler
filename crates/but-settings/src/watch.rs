@@ -1,5 +1,6 @@
 use crate::AppSettings;
 use anyhow::Result;
+use notify::event::RemoveKind;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
@@ -59,7 +60,7 @@ impl Drop for AppSettingsEnforceSaveToDisk<'_> {
     }
 }
 
-const SETTINGS_FILE: &str = "settings.json";
+pub(crate) const SETTINGS_FILE: &str = "settings.json";
 
 impl AppSettingsWithDiskSync {
     /// Create a new instance without actually starting to [watch in the background](Self::watch_in_background()).
@@ -130,7 +131,26 @@ impl AppSettingsWithDiskSync {
                             send_event(update)?;
                         }
                     }
+                    // On linux (maybe even other platforms) Modify doesn't trigger as we replace
+                    // the original file with a new one when writing.
+                    // On Linux, the watcher then also doesn't keep watching the new file, despite being
+                    // at the same path.
+                    Ok(Ok(Event {
+                        kind: notify::event::EventKind::Remove(RemoveKind::File),
+                        ..
+                    })) if cfg!(target_os = "linux") => {
+                        let Ok(mut last_seen_settings) = snapshot.write() else {
+                            continue;
+                        };
+                        if let Ok(update) = AppSettings::load(&config_path) {
+                            tracing::info!("settings.json replaced; refreshing settings");
+                            // Have to rewatch the path here as the watcher loses track.
+                            watcher.watch(&config_path, RecursiveMode::NonRecursive)?;
 
+                            *last_seen_settings = update.clone();
+                            send_event(update)?;
+                        }
+                    }
                     Err(_) => {
                         tracing::error!(
                             "Error watching config file {:?} - watcher terminated",

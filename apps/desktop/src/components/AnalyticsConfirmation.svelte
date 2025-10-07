@@ -1,13 +1,13 @@
 <script lang="ts">
 	import AnalyticsSettings from '$components/AnalyticsSettings.svelte';
 	import { initAnalyticsIfEnabled } from '$lib/analytics/analytics';
-	import { PostHogWrapper } from '$lib/analytics/posthog';
-	import { AppSettings } from '$lib/config/appSettings';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
+	import { OnboardingEvent, POSTHOG_WRAPPER } from '$lib/analytics/posthog';
+	import { APP_SETTINGS } from '$lib/config/appSettings';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, TestId } from '@gitbutler/ui';
 
-	const appSettings = getContext(AppSettings);
-	const posthog = getContext(PostHogWrapper);
+	const appSettings = inject(APP_SETTINGS);
+	const posthog = inject(POSTHOG_WRAPPER);
 	const analyticsConfirmed = appSettings.appAnalyticsConfirmed;
 </script>
 
@@ -18,11 +18,14 @@
 	<div class="analytics-confirmation__actions">
 		<Button
 			style="pop"
-			testId="analytics-continue"
+			testId={TestId.OnboardingPageAnalyticsSettingsContinueButton}
 			icon="chevron-right-small"
 			onclick={() => {
 				$analyticsConfirmed = true;
-				initAnalyticsIfEnabled(appSettings, posthog);
+				initAnalyticsIfEnabled(appSettings, posthog, true).then(() => {
+					// Await the initialization before logging the event to ensure PostHog is ready
+					posthog.captureOnboarding(OnboardingEvent.ConfirmedAnalytics);
+				});
 			}}
 		>
 			Continue
@@ -32,9 +35,9 @@
 
 <style lang="postcss">
 	.analytics-confirmation {
-		width: 100%;
 		display: flex;
 		flex-direction: column;
+		width: 100%;
 		gap: 12px;
 	}
 

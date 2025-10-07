@@ -14,8 +14,10 @@ import { patchCommitTable } from '$lib/patches/patchCommitsSlice';
 import { patchIdableTable } from '$lib/patches/patchIdablesSlice';
 import { patchSectionsReducer } from '$lib/patches/patchSectionsSlice';
 import { exampleReducer } from '$lib/redux/example';
+import { rulesTable } from '$lib/rules/rulesSlice';
 import { notificationSettingsTable } from '$lib/settings/notificationSetttingsSlice';
 import { userByLoginTable, userTable } from '$lib/users/usersSlice';
+import { InjectionToken } from '@gitbutler/core/context';
 import { configureStore, createSelector } from '@reduxjs/toolkit';
 
 // Individual interfaces to be used when consuming in other servies.
@@ -95,9 +97,17 @@ export type AppRecentlyPushedProjectIds = {
 	readonly recentlyPushedProjectIds: ReturnType<typeof recentlyPushedProjectIdsReducer>;
 };
 
+export type AppRulesState = {
+	readonly rules: ReturnType<typeof rulesTable.reducer>;
+};
+
+export const APP_DISPATCH: InjectionToken<AppDispatch> = new InjectionToken('AppDispatch');
+
 export class AppDispatch {
 	constructor(readonly dispatch: typeof AppState.prototype._store.dispatch) {}
 }
+
+export const APP_STATE: InjectionToken<AppState> = new InjectionToken('AppState');
 
 export class AppState
 	implements
@@ -118,7 +128,8 @@ export class AppState
 		AppNotificationSettingsState,
 		AppPatchIdablesState,
 		AppRecentlyInteractedProjectIds,
-		AppRecentlyPushedProjectIds
+		AppRecentlyPushedProjectIds,
+		AppRulesState
 {
 	protected readonly reducers = {
 		examples: exampleReducer,
@@ -139,7 +150,8 @@ export class AppState
 		notificationSettings: notificationSettingsTable.reducer,
 		patchIdables: patchIdableTable.reducer,
 		recentlyInteractedProjectIds: recentlyInteractedProjectIdsReducer,
-		recentlyPushedProjectIds: recentlyPushedProjectIdsReducer
+		recentlyPushedProjectIds: recentlyPushedProjectIdsReducer,
+		rules: rulesTable.reducer
 	};
 
 	/**
@@ -231,6 +243,8 @@ export class AppState
 		(rootState) => rootState.recentlyPushedProjectIds
 	);
 
+	private readonly selectRules = createSelector([this.selectSelf], (rootState) => rootState.rules);
+
 	readonly example = $derived(this.selectExample(this.rootState));
 	readonly posts = $derived(this.selectPosts(this.rootState));
 	readonly feeds = $derived(this.selectFeeds(this.rootState));
@@ -252,6 +266,7 @@ export class AppState
 		this.selectRecentlyInteractedProjectIds(this.rootState)
 	);
 	readonly recentlyPushedProjectIds = $derived(this.selectRecentlyPushedProjectIds(this.rootState));
+	readonly rules = $derived(this.selectRules(this.rootState));
 
 	constructor() {
 		$effect(() => {

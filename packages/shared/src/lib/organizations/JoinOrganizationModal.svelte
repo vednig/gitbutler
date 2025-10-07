@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { getContext } from '$lib/context';
-	import { OrganizationService } from '$lib/organizations/organizationService';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
+	import { ORGANIZATION_SERVICE } from '$lib/organizations/organizationService';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, Modal, Textbox } from '@gitbutler/ui';
 
-	const organizationService = getContext(OrganizationService);
+	const organizationService = inject(ORGANIZATION_SERVICE);
 
 	let modal = $state<Modal>();
 
@@ -29,13 +27,11 @@
 </script>
 
 <Modal bind:this={modal} title="Join an organization" width="small">
-	{#snippet children()}
-		<p>To join an organization, you need to have a join code and an organization slug.</p>
-		<br />
-		<Textbox bind:value={organizationSlug} label="Organization slug" />
-		<br />
-		<Textbox bind:value={joinCode} label="Join code" />
-	{/snippet}
+	<p>To join an organization, you need to have a join code and an organization slug.</p>
+	<br />
+	<Textbox bind:value={organizationSlug} label="Organization slug" />
+	<br />
+	<Textbox bind:value={joinCode} label="Join code" />
 
 	{#snippet controls(close)}
 		<Button

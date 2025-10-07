@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { getContext } from '@gitbutler/shared/context';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
 	import { goto } from '$app/navigation';
+	import { inject } from '@gitbutler/core/context';
+	import { WEB_ROUTES_SERVICE } from '@gitbutler/shared/routing/webRoutes.svelte';
+	import { Button, Icon } from '@gitbutler/ui';
 
-	const routes = getContext(WebRoutesService);
+	const routes = inject(WEB_ROUTES_SERVICE);
 
 	function goToHome() {
 		goto(routes.homePath());
@@ -33,8 +32,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		height: 100%;
 		width: 100%;
+		height: 100%;
 		padding: 32px;
 	}
 
@@ -42,17 +41,17 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		text-align: center;
 		max-width: 400px;
 		padding: 32px;
-		background-color: var(--clr-bg-1);
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
+		background-color: var(--clr-bg-1);
+		text-align: center;
 	}
 
 	.icon-container {
-		color: var(--clr-scale-red-10);
 		margin-bottom: 16px;
+		color: var(--clr-scale-red-10);
 	}
 
 	.title {
@@ -60,8 +59,8 @@
 	}
 
 	.error-message {
-		color: var(--clr-text-2);
 		margin-bottom: 24px;
+		color: var(--clr-text-2);
 		line-height: 1.5;
 	}
 

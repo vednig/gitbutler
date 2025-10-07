@@ -1,25 +1,29 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import ReduxResult from '$components/ReduxResult.svelte';
 	import RemoveProjectButton from '$components/RemoveProjectButton.svelte';
 	import { showError } from '$lib/notifications/toasts';
-	import { Project } from '$lib/project/project';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { getContext } from '@gitbutler/shared/context';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import * as toasts from '@gitbutler/ui/toasts';
-	import { goto } from '$app/navigation';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { useSettingsModal } from '$lib/settings/settingsModal.svelte';
+	import { inject } from '@gitbutler/core/context';
 
-	const projectsService = getContext(ProjectsService);
-	const project = getContext(Project);
+	import { SectionCard, chipToasts } from '@gitbutler/ui';
+
+	const { projectId }: { projectId: string } = $props();
+
+	const projectsService = inject(PROJECTS_SERVICE);
+	const projectQuery = $derived(projectsService.getProject(projectId));
+	const { closeSettings } = useSettingsModal();
 
 	let isDeleting = $state(false);
 
 	async function onDeleteClicked() {
 		isDeleting = true;
 		try {
-			await projectsService.deleteProject(project.id);
-			await projectsService.reload();
+			await projectsService.deleteProject(projectId);
+			closeSettings();
 			goto('/');
-			toasts.success('Project deleted');
+			chipToasts.success('Project deleted');
 		} catch (err: any) {
 			console.error(err);
 			showError('Failed to delete project', err);
@@ -29,15 +33,18 @@
 	}
 </script>
 
-<SectionCard>
-	{#snippet title()}
-		Remove project
+<ReduxResult {projectId} result={projectQuery.result}>
+	{#snippet children(project)}
+		<SectionCard>
+			{#snippet title()}
+				Remove project
+			{/snippet}
+			{#snippet caption()}
+				Removing projects only clears configuration — your code stays safe.
+			{/snippet}
+			<div>
+				<RemoveProjectButton projectTitle={project.title} {isDeleting} {onDeleteClicked} />
+			</div>
+		</SectionCard>
 	{/snippet}
-	{#snippet caption()}
-		You can remove projects from GitButler, your code remains safe as this only clears
-		configuration.
-	{/snippet}
-	<div>
-		<RemoveProjectButton projectTitle={project.title} {isDeleting} {onDeleteClicked} />
-	</div>
-</SectionCard>
+</ReduxResult>

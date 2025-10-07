@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import Scrollbar, { type ScrollbarPaddingType } from '@gitbutler/ui/scroll/Scrollbar.svelte';
+	import { SETTINGS } from '$lib/settings/userSettings';
+	import { inject } from '@gitbutler/core/context';
+	import { Scrollbar, type ScrollbarPaddingType } from '@gitbutler/ui';
 
 	interface Props {
 		viewport: HTMLDivElement;
@@ -13,6 +13,7 @@
 		zIndex?: string;
 		onthumbdrag?: (dragging: boolean) => void;
 		onscroll?: (e: Event) => void;
+		updateTrack?: () => void;
 	}
 
 	const {
@@ -27,7 +28,13 @@
 		onscroll
 	}: Props = $props();
 
-	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
+	const userSettings = inject(SETTINGS);
+
+	let scrollbar = $state<Scrollbar>();
+
+	export function updateTrack() {
+		scrollbar?.updateTrack();
+	}
 </script>
 
 <Scrollbar

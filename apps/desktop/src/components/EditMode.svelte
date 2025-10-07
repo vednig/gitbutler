@@ -1,162 +1,115 @@
 <script lang="ts">
 	import ScrollableContainer from '$components/ConfigurableScrollableContainer.svelte';
 	import FileContextMenu from '$components/FileContextMenu.svelte';
-	import { Commit } from '$lib/commits/commit';
-	import { CommitService } from '$lib/commits/commitService.svelte';
+	import ReduxResult from '$components/ReduxResult.svelte';
 	import {
 		conflictEntryHint,
 		getConflictState,
-		getInitialFileStatus,
-		type ConflictEntryPresence,
-		type ConflictState
+		type ConflictEntryPresence
 	} from '$lib/conflictEntryPresence';
-	import { type RemoteFile } from '$lib/files/file';
-	import { UncommitedFilesWatcher } from '$lib/files/watcher';
-	import { ModeService, type EditModeMetadata } from '$lib/mode/modeService';
-	import { Project } from '$lib/project/project';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { UserService } from '$lib/user/userService';
-	import { computeFileStatus } from '$lib/utils/fileStatus';
-	import { getEditorUri, openExternalUrl } from '$lib/utils/url';
-	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import { getContext } from '@gitbutler/shared/context';
-	import Badge from '@gitbutler/ui/Badge.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import InfoButton from '@gitbutler/ui/InfoButton.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import Avatar from '@gitbutler/ui/avatar/Avatar.svelte';
-	import FileListItem from '@gitbutler/ui/file/FileListItem.svelte';
+	import { FILE_SERVICE } from '$lib/files/fileService';
+	import { MODE_SERVICE, type EditModeMetadata } from '$lib/mode/modeService';
+	import { vscodePath } from '$lib/project/project';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { createCommitSelection } from '$lib/selection/key';
+	import { SETTINGS } from '$lib/settings/userSettings';
+	import { STACK_SERVICE } from '$lib/stacks/stackService.svelte';
+	import { USER } from '$lib/user/user';
+	import { splitMessage } from '$lib/utils/commitMessage';
+	import { computeChangeStatus } from '$lib/utils/fileStatus';
+	import { getEditorUri, URL_SERVICE } from '$lib/utils/url';
+	import { inject } from '@gitbutler/core/context';
+
+	import { Avatar, Badge, Button, FileListItem, InfoButton, Modal, TestId } from '@gitbutler/ui';
+	import { isDefined } from '@gitbutler/ui/utils/typeguards';
 	import { SvelteSet } from 'svelte/reactivity';
-	import type { FileStatus } from '@gitbutler/ui/file/types';
-	import type { Writable } from 'svelte/store';
+	import { derived, fromStore, readable, toStore, type Readable } from 'svelte/store';
+	import type { FileInfo } from '$lib/files/file';
+	import type { TreeChange } from '$lib/hunks/change';
+	import type { FileStatus } from '@gitbutler/ui/components/file/types';
 
-	interface Props {
+	type Props = {
+		projectId: string;
 		editModeMetadata: EditModeMetadata;
+	};
+
+	const { projectId, editModeMetadata }: Props = $props();
+
+	const projectService = inject(PROJECTS_SERVICE);
+	const projectQuery = $derived(projectService.getProject(projectId));
+
+	const user = inject(USER);
+	const stackService = inject(STACK_SERVICE);
+	const modeService = inject(MODE_SERVICE);
+	const userSettings = inject(SETTINGS);
+	const fileService = inject(FILE_SERVICE);
+	const urlService = inject(URL_SERVICE);
+
+	const initialFiles = $derived(modeService.initialEditModeState({ projectId }));
+	const uncommittedFiles = $derived(modeService.changesSinceInitialEditState({ projectId }));
+
+	const [saveEdit, savingEdit] = modeService.saveEditAndReturnToWorkspaceMutation;
+	const [abortEdit, abortingEdit] = modeService.abortEditAndReturnToWorkspaceMutation;
+
+	function readFromWorkspace(
+		filePath: string,
+		projectId: string
+	): Readable<{ data: FileInfo; isLarge: boolean } | undefined> {
+		return readable(undefined as { data: FileInfo; isLarge: boolean } | undefined, (set) => {
+			fileService.readFromWorkspace(filePath, projectId).then(set);
+		});
 	}
 
-	const { editModeMetadata }: Props = $props();
-
-	const project = getContext(Project);
-	const remoteCommitService = getContext(CommitService);
-	const uncommitedFileWatcher = getContext(UncommitedFilesWatcher);
-	const modeService = getContext(ModeService);
-	const userSettings = getContextStoreBySymbol<Settings, Writable<Settings>>(SETTINGS);
-
-	const uncommitedFiles = uncommitedFileWatcher.uncommitedFiles;
-
-	const userService = getContext(UserService);
-	const user = userService.user;
-
-	let modeServiceAborting = $state<'inert' | 'loading' | 'completed'>('inert');
-	let modeServiceSaving = $state<'inert' | 'loading' | 'completed'>('inert');
-
-	let initialFiles = $state<[RemoteFile, ConflictEntryPresence | undefined][]>([]);
-	let commit = $state<Commit>();
-
-	async function getCommitData() {
-		commit = await remoteCommitService.find(project.id, editModeMetadata.commitOid);
-	}
-
-	$effect(() => {
-		getCommitData();
-	});
-
-	const authorImgUrl = $derived.by(() => {
-		if (commit) {
-			return commit.author.email?.toLowerCase() === $user?.email?.toLowerCase()
-				? $user?.picture
-				: commit.author.gravatarUrl;
-		}
-		return undefined;
-	});
+	let commitQuery = $derived(stackService.commitDetails(projectId, editModeMetadata.commitOid));
 
 	let filesList = $state<HTMLDivElement | undefined>(undefined);
 	let contextMenu = $state<ReturnType<typeof FileContextMenu> | undefined>(undefined);
 	let confirmSaveModal = $state<ReturnType<typeof Modal> | undefined>(undefined);
 
-	$effect(() => {
-		modeService.getInitialIndexState().then((files) => {
-			initialFiles = files;
-		});
-	});
-
 	interface FileEntry {
-		conflicted: boolean;
-		name: string;
 		path: string;
 		status?: FileStatus;
+		conflicted: boolean;
 		conflictHint?: string;
-		conflictState?: ConflictState;
-		conflictEntryPresence?: ConflictEntryPresence;
 	}
 
 	const initialFileMap = $derived(
-		new Map<string, RemoteFile>(initialFiles.map(([file]) => [file.path, file]))
-	);
-
-	const uncommitedFileMap = $derived(
-		new Map<string, RemoteFile>($uncommitedFiles.map(([file]) => [file.path, file]))
+		new Map<string, { file: TreeChange; conflictEntryPresence?: ConflictEntryPresence }>(
+			initialFiles.response?.map(([f, c]) => [f.path, { file: f, conflictEntryPresence: c }]) || []
+		)
 	);
 
 	const files = $derived.by(() => {
+		if (!initialFiles.response || !uncommittedFiles.response) return [];
+
 		const outputMap = new Map<string, FileEntry>();
 
-		// Create output
-		{
-			initialFiles.forEach(([initialFile, conflictEntryPresence]) => {
-				const conflictState =
-					conflictEntryPresence && getConflictState(initialFile, conflictEntryPresence);
-
-				const uncommitedFileChange = uncommitedFileMap.get(initialFile.path);
-
-				outputMap.set(initialFile.path, {
-					name: initialFile.filename,
-					path: initialFile.path,
-					conflicted: !!conflictEntryPresence,
-					conflictHint: conflictEntryPresence
-						? conflictEntryHint(conflictEntryPresence)
-						: undefined,
-					status: getInitialFileStatus(uncommitedFileChange, conflictEntryPresence),
-					conflictState,
-					conflictEntryPresence
-				});
+		initialFiles.response.forEach(([initialFile, conflictEntryPresence]) => {
+			outputMap.set(initialFile.path, {
+				path: initialFile.path,
+				conflicted: !!conflictEntryPresence,
+				conflictHint: conflictEntryPresence ? conflictEntryHint(conflictEntryPresence) : undefined
 			});
+		});
 
-			$uncommitedFiles.forEach(([uncommitedFile]) => {
-				const existingFile = initialFileMap.get(uncommitedFile.path);
-				determineOutput: {
-					if (existingFile) {
-						const fileChanged = existingFile.hunks.some(
-							(hunk) => !uncommitedFile.hunks.map((hunk) => hunk.diff).includes(hunk.diff)
-						);
-
-						if (fileChanged) {
-							// All initial entries should have been added to the map,
-							// so we can safely assert that it will be present
-							const outputFile = outputMap.get(uncommitedFile.path)!;
-							if (outputFile.conflicted && outputFile.conflictEntryPresence) {
-								outputFile.conflictState = getConflictState(
-									uncommitedFile,
-									outputFile.conflictEntryPresence
-								);
-							}
-
-							if (!outputFile.conflicted) {
-								outputFile.status = 'M';
-							}
-						}
-						break determineOutput;
-					}
-
-					outputMap.set(uncommitedFile.path, {
-						name: uncommitedFile.filename,
-						path: uncommitedFile.path,
-						conflicted: false,
-						status: computeFileStatus(uncommitedFile)
-					});
+		uncommittedFiles.response.forEach((uncommitedFile) => {
+			const outputFile = outputMap.get(uncommitedFile.path)!;
+			if (outputFile) {
+				// We don't want to set a status if the file is
+				// conflicted because it will _always_ show up as
+				// modified
+				if (!outputFile.conflicted) {
+					outputFile.status = computeChangeStatus(uncommitedFile);
 				}
+				return;
+			}
+
+			outputMap.set(uncommitedFile.path, {
+				path: uncommitedFile.path,
+				conflicted: false,
+				status: computeChangeStatus(uncommitedFile)
 			});
-		}
+		});
 
 		const orderedOutput = Array.from(outputMap.values());
 		orderedOutput.sort((a, b) => {
@@ -173,42 +126,52 @@
 		return orderedOutput;
 	});
 
-	const conflictedFiles = $derived(files.filter((file) => file.conflicted));
-	let manuallyResolvedFiles = new SvelteSet<string>();
-	const stillConflictedFiles = $derived(
-		conflictedFiles.filter(
-			(file) => !manuallyResolvedFiles.has(file.path) && file.conflictState !== 'resolved'
-		)
+	// Create a mapping from file paths to TreeChange objects for context menu
+	const filePathToTreeChange = $derived(
+		new Map<string, TreeChange>([
+			...(initialFiles.response?.map(([f]) => [f.path, f] as [string, TreeChange]) || []),
+			...(uncommittedFiles.response?.map((f) => [f.path, f] as [string, TreeChange]) || [])
+		])
 	);
 
-	function isConflicted(file: FileEntry): boolean {
-		return (
-			file.conflicted && file.conflictState !== 'resolved' && !manuallyResolvedFiles.has(file.path)
-		);
+	function getTreeChangeForFile(file: FileEntry): TreeChange | undefined {
+		return filePathToTreeChange.get(file.path);
+	}
+
+	const conflictedFiles = $derived(files.filter((file) => file.conflicted));
+
+	let manuallyResolvedFiles = new SvelteSet<string>();
+	const filesWithConflictedStatues = $derived(
+		conflictedFiles.map((f) => [f, isConflicted(f)] as [FileEntry, Readable<boolean>])
+	);
+	const stillConflictedFiles = $derived(
+		filesWithConflictedStatues.filter(([_, status]) => fromStore(status).current).map(([f]) => f)
+	);
+
+	function isConflicted(fileEntry: FileEntry): Readable<boolean> {
+		const file = readFromWorkspace(fileEntry.path, projectId);
+		const conflictState = derived(file, (file) => {
+			if (!isDefined(file?.data.content)) return 'unknown';
+			const { conflictEntryPresence } = initialFileMap.get(fileEntry.path) || {};
+			if (!conflictEntryPresence) return 'unknown';
+			return getConflictState(conflictEntryPresence, file.data.content);
+		});
+
+		const manuallyResolved = toStore(() => manuallyResolvedFiles.has(fileEntry.path));
+
+		return derived([conflictState, manuallyResolved], ([conflictState, manuallyResolved]) => {
+			return fileEntry.conflicted && conflictState === 'conflicted' && !manuallyResolved;
+		});
 	}
 
 	async function abort() {
-		modeServiceAborting = 'loading';
-
-		try {
-			await modeService.abortEditAndReturnToWorkspace();
-			await modeService.awaitNotEditing();
-			modeServiceAborting = 'completed';
-		} finally {
-			modeServiceAborting = 'inert';
-		}
+		if (loading) return;
+		await abortEdit({ projectId });
 	}
 
 	async function save() {
-		modeServiceSaving = 'loading';
-
-		try {
-			await modeService.saveEditAndReturnToWorkspace();
-			await modeService.awaitNotEditing();
-			modeServiceSaving = 'completed';
-		} finally {
-			modeServiceAborting = 'inert';
-		}
+		if (loading) return;
+		await saveEdit({ projectId });
 	}
 
 	async function handleSave() {
@@ -220,119 +183,148 @@
 		await save();
 	}
 
-	async function openAllConflictedFiles() {
+	async function openAllConflictedFiles(projectPath: string) {
 		for (const file of conflictedFiles) {
 			const path = getEditorUri({
 				schemeId: $userSettings.defaultCodeEditor.schemeIdentifer,
-				path: [project.vscodePath, file.path]
+				path: [vscodePath(projectPath), file.path]
 			});
-			openExternalUrl(path);
+			urlService.openExternalUrl(path);
 		}
 	}
 
 	let isCommitListScrolled = $state(false);
 
-	const loading = $derived(modeServiceSaving === 'loading' || modeServiceAborting === 'loading');
+	const loading = $derived(savingEdit.current.isLoading || abortingEdit.current.isLoading);
 </script>
 
-<div class="editmode__container">
-	<h2 class="editmode__title text-18 text-body text-bold">
-		You are editing commit <span class="code-string">
-			{editModeMetadata.commitOid.slice(0, 7)}
-		</span>
-		<InfoButton title="Edit Mode">
-			Edit Mode lets you modify an existing commit in isolation or resolve conflicts. Any changes
-			made, including new files, will be added to the selected commit.
-		</InfoButton>
-	</h2>
+<div class="editmode-wrapper" data-testid={TestId.EditMode}>
+	<ReduxResult {projectId} result={projectQuery.result}>
+		{#snippet children(project)}
+			<div class="editmode__container">
+				<h2 class="editmode__title text-18 text-body text-bold">
+					You are editing commit <span class="code-string">
+						{editModeMetadata.commitOid.slice(0, 7)}
+					</span>
+					<InfoButton title="Edit Mode">
+						Edit Mode lets you modify an existing commit in isolation or resolve conflicts. Any
+						changes made, including new files, will be added to the selected commit.
+					</InfoButton>
+				</h2>
 
-	<div class="commit-group">
-		<div class="card commit-card">
-			<h3 class="text-13 text-semibold text-body commit-card__title">
-				{commit?.descriptionTitle || 'Undefined commit'}
-			</h3>
+				<div class="commit-group">
+					<div class="card commit-card">
+						<ReduxResult {projectId} result={commitQuery.result}>
+							{#snippet children(commit)}
+								{@const authorImgUrl = commit
+									? commit.author.email?.toLowerCase() === $user?.email?.toLowerCase()
+										? $user?.picture
+										: commit.author.gravatarUrl
+									: undefined}
+								{@const title = splitMessage(commit.message).title}
+								<h3 class="text-13 text-semibold text-body commit-card__title">
+									{title || 'Undefined commit'}
+								</h3>
 
-			{#if commit}
-				<div class="text-11 commit-card__details">
-					{#if authorImgUrl && commit.author.email}
-						<Avatar srcUrl={authorImgUrl} tooltip={commit.author.email} />
-						<span class="commit-card__divider">•</span>
-					{/if}
-					<span class="">{editModeMetadata.commitOid.slice(0, 7)}</span>
-					<span class="commit-card__divider">•</span>
-					<span class="">{commit.author.name}</span>
-				</div>
-			{/if}
+								{#if commit}
+									<div class="text-11 commit-card__details">
+										{#if authorImgUrl && commit.author.email}
+											<Avatar srcUrl={authorImgUrl} tooltip={commit.author.email} />
+											<span class="commit-card__divider">•</span>
+										{/if}
+										<span class="">{editModeMetadata.commitOid.slice(0, 7)}</span>
+										<span class="commit-card__divider">•</span>
+										<span class="">{commit.author.name}</span>
+									</div>
+								{/if}
 
-			<div class="commit-card__type-indicator"></div>
-		</div>
-
-		<div bind:this={filesList} class="card files">
-			<div class="header" class:show-border={isCommitListScrolled}>
-				<h3 class="text-13 text-semibold">Commit files</h3>
-				<Badge>{files.length}</Badge>
-			</div>
-			<ScrollableContainer
-				onscroll={(e) => {
-					if (e.target instanceof HTMLElement) {
-						isCommitListScrolled = e.target.scrollTop > 0;
-					}
-				}}
-			>
-				{#each files as file (file.path)}
-					<div class="file">
-						<FileListItem
-							filePath={file.path}
-							fileStatus={file.status}
-							conflicted={isConflicted(file)}
-							onresolveclick={file.conflicted
-								? () => manuallyResolvedFiles.add(file.path)
-								: undefined}
-							conflictHint={file.conflictHint}
-							onclick={(e) => {
-								contextMenu?.open(e, { files: [file] });
-							}}
-							oncontextmenu={(e) => {
-								contextMenu?.open(e, { files: [file] });
-							}}
-						/>
+								<div class="commit-card__type-indicator"></div>
+							{/snippet}
+						</ReduxResult>
 					</div>
-				{/each}
-			</ScrollableContainer>
-		</div>
-	</div>
 
-	<FileContextMenu
-		bind:this={contextMenu}
-		trigger={filesList}
-		isUnapplied={false}
-		branchId={undefined}
-	/>
+					<div bind:this={filesList} class="card files">
+						<div class="header" class:show-border={isCommitListScrolled}>
+							<h3 class="text-15 text-semibold">Commit files</h3>
+							<Badge>{files.length}</Badge>
+						</div>
+						<ScrollableContainer
+							onscrollTop={(visible) => {
+								isCommitListScrolled = !visible;
+							}}
+						>
+							{#each files as file (file.path)}
+								{@const conflictedStore = isConflicted(file)}
+								{@const conflicted = fromStore(conflictedStore).current}
+								<div class="file">
+									<FileListItem
+										filePath={file.path}
+										fileStatus={file.status}
+										{conflicted}
+										clickable={false}
+										onresolveclick={file.conflicted
+											? () => manuallyResolvedFiles.add(file.path)
+											: undefined}
+										conflictHint={file.conflictHint}
+										oncontextmenu={(e) => {
+											const treeChange = getTreeChangeForFile(file);
+											if (treeChange) {
+												contextMenu?.open(e, { changes: [treeChange] });
+											}
+										}}
+									/>
+								</div>
+							{/each}
+						</ScrollableContainer>
+					</div>
+				</div>
 
-	<p class="text-12 text-body editmode__helptext">
-		Please don't make any commits while in edit mode.
-		<br />
-		To exit edit mode, use the provided actions.
-	</p>
+				<p class="text-12 text-body editmode__helptext">
+					⚠ Please don't make any commits while in edit mode.
+					<br />
+					To exit edit mode, use the provided actions.
+				</p>
 
-	<div class="editmode__actions">
-		<Button kind="outline" onclick={abort} disabled={loading} {loading}>Cancel</Button>
-		{#if conflictedFiles.length > 0}
-			<Button
-				style="neutral"
-				onclick={openAllConflictedFiles}
-				icon="open-link"
-				tooltip={conflictedFiles.length === 1
-					? 'Open the conflicted file in your editor'
-					: 'Open all files with conflicts in your editor'}
-			>
-				Open conflicted files
-			</Button>
-		{/if}
-		<Button style="pop" icon="tick-small" onclick={handleSave} disabled={loading} {loading}>
-			Save and exit
-		</Button>
-	</div>
+				<div class="editmode__actions">
+					<div class="flex flex-1">
+						{#if conflictedFiles.length > 0}
+							<Button
+								kind="outline"
+								icon="open-editor-small"
+								reversedDirection
+								onclick={() => openAllConflictedFiles(project.path)}
+								tooltip={conflictedFiles.length === 1
+									? 'Open the conflicted file in your editor'
+									: 'Open all files with conflicts in your editor'}
+							>
+								Open conflicted files
+							</Button>
+						{/if}
+					</div>
+					<Button kind="outline" onclick={abort} disabled={loading} {loading}>Cancel</Button>
+					<Button
+						testId={TestId.EditModeSaveAndExitButton}
+						style="pop"
+						icon="tick-small"
+						onclick={handleSave}
+						disabled={loading}
+						{loading}
+					>
+						Save changes and exit
+					</Button>
+				</div>
+			</div>
+
+			<FileContextMenu
+				bind:this={contextMenu}
+				{projectId}
+				trigger={filesList}
+				stackId={undefined}
+				selectionId={createCommitSelection({ commitId: editModeMetadata.commitOid })}
+				editMode={true}
+			/>
+		{/snippet}
+	</ReduxResult>
 </div>
 
 <Modal
@@ -345,60 +337,67 @@
 		close();
 	}}
 >
-	{#snippet children()}
-		<p class="text-13 text-body helper-text">
-			There are still some files that look to be conflicted. Are you sure that you want to save and
-			exit?
-		</p>
-	{/snippet}
+	<p class="text-13 text-body helper-text">
+		There are still some files that look to be conflicted. Are you sure that you want to save and
+		exit?
+	</p>
 	{#snippet controls(close)}
 		<Button kind="outline" type="reset" onclick={close}>Cancel</Button>
-		<Button style="error" type="submit">Save and exit</Button>
+		<Button style="error" type="submit" {loading}>Save and exit</Button>
 	{/snippet}
 </Modal>
 
 <style lang="postcss">
+	.editmode-wrapper {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+		border: 1px solid var(--clr-border-2);
+		border-radius: var(--radius-ml);
+	}
+
 	.editmode__container {
 		--side-padding: 40px;
 		display: flex;
 		flex-direction: column;
 		justify-content: center;
+		width: 100%;
+		max-width: calc(520px + 2 * var(--side-padding));
 		margin: 0 auto;
 		padding: 40px var(--side-padding) 24px;
 		overflow: hidden;
-		width: 100%;
-		max-width: calc(520px + 2 * var(--side-padding));
 	}
 
 	.editmode__title {
-		color: var(--clr-text-1);
 		margin-bottom: 12px;
+		color: var(--clr-text-1);
 	}
 
 	.editmode__actions {
 		display: flex;
-		gap: 8px;
-		padding-bottom: 24px;
 		flex-wrap: wrap;
 		justify-content: flex-end;
+		padding-bottom: 24px;
+		gap: 8px;
 	}
 
 	.files {
 		flex: 1;
 		margin-bottom: 12px;
-		overflow: hidden;
 		padding-bottom: 8px;
+		overflow: hidden;
 
 		& .header {
 			display: flex;
 			align-items: center;
+			padding: 16px;
+			padding-bottom: 12px;
 			gap: 4px;
-			padding-left: 16px;
-			padding-top: 16px;
-			padding-bottom: 8px;
 
 			&.show-border {
-				border-bottom: 1px solid var(--clr-border-3);
+				border-bottom: 1px solid var(--clr-border-2);
 			}
 		}
 
@@ -416,19 +415,19 @@
 
 	/* COMMIT */
 	.commit-group {
-		position: relative;
 		display: flex;
+		position: relative;
 		flex-direction: column;
-		gap: 4px;
 		overflow: hidden;
+		gap: 4px;
 	}
 
 	/* COMMIT CARD */
 	.commit-card {
 		position: relative;
 		padding: 14px 14px 14px 16px;
-		gap: 8px;
 		overflow: hidden;
+		gap: 8px;
 	}
 
 	.commit-card__title {
@@ -451,7 +450,7 @@
 	}
 
 	.editmode__helptext {
-		color: var(--clr-text-3);
 		margin-bottom: 16px;
+		color: var(--clr-text-2);
 	}
 </style>

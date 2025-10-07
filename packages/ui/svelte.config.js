@@ -11,11 +11,13 @@ const config = {
 			fallback: 'index.html',
 			precompress: true,
 			strict: false
-		})
+		}),
+		alias: {
+			$components: 'src/lib/components'
+		}
 	},
 	compilerOptions: {
-		css: 'injected',
-		enableSourcemap: true
+		css: 'injected'
 	}
 };
 

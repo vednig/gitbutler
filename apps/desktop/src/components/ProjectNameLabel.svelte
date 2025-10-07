@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@gitbutler/ui/Icon.svelte';
+	import { Icon } from '@gitbutler/ui';
 	interface Props {
 		projectName?: string;
 	}
@@ -9,18 +9,18 @@
 
 <div class="project-name">
 	<Icon name="repo-book-small" />
-	<span class="text-12 text-bold">
+	<span class="text-13 text-semibold">
 		{projectName}
 	</span>
 </div>
 
 <style>
 	.project-name {
-		align-self: flex-start;
 		display: flex;
 		align-items: center;
+		align-self: flex-start;
 		gap: 6px;
 		border-radius: var(--radius-s);
-		color: var(--clr-scale-ntrl-50);
+		color: var(--clr-text-2);
 	}
 </style>

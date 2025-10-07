@@ -16,6 +16,6 @@ rust:
   - changed-files:
       - any-glob-to-any-file: packages/ui/**/*
 
-'@gitbutler/design-tokens':
+'@gitbutler/no-relative-imports':
   - changed-files:
-      - any-glob-to-any-file: packages/design-tokens/**/*
+      - any-glob-to-any-file: packages/no-relative-imports/**/*

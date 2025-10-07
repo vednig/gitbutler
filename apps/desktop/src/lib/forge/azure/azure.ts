@@ -1,8 +1,11 @@
 import { AzureBranch } from '$lib/forge/azure/azureBranch';
 import type { Forge, ForgeName } from '$lib/forge/interface/forge';
 import type { ForgeRepoService } from '$lib/forge/interface/forgeRepoService';
-import type { ForgeArguments } from '$lib/forge/interface/types';
+import type { ForgeArguments, ForgeUser } from '$lib/forge/interface/types';
+import type { ReactiveQuery } from '$lib/state/butlerModule';
+import type { ReduxTag } from '$lib/state/tags';
 import type { RepoInfo } from '$lib/url/gitUrl';
+import type { TagDescription } from '@reduxjs/toolkit/query';
 
 export const AZURE_DOMAIN = 'dev.azure.com';
 
@@ -14,16 +17,29 @@ export const AZURE_DOMAIN = 'dev.azure.com';
  */
 export class AzureDevOps implements Forge {
 	readonly name: ForgeName = 'azure';
+	readonly authenticated: boolean;
 	private baseUrl: string;
 	private repo: RepoInfo;
 	private baseBranch: string;
 	private forkStr?: string;
 
-	constructor({ repo, baseBranch, forkStr }: ForgeArguments) {
-		this.baseUrl = `https://${AZURE_DOMAIN}/${repo.organization}/${repo.owner}/_git/${repo.name}`;
+	constructor({ repo, baseBranch, forkStr, authenticated }: ForgeArguments) {
+		// Use the protocol from repo if available, otherwise default to https
+		// For SSH remote URLs, always use HTTPS for browser compatibility
+		let protocol = repo.protocol?.endsWith(':')
+			? repo.protocol.slice(0, -1)
+			: repo.protocol || 'https';
+
+		// SSH URLs cannot be opened in browsers, so convert to HTTPS
+		if (protocol === 'ssh') {
+			protocol = 'https';
+		}
+
+		this.baseUrl = `${protocol}://${repo.domain}/${repo.organization}/${repo.owner}/_git/${repo.name}`;
 		this.repo = repo;
 		this.baseBranch = baseBranch;
 		this.forkStr = forkStr;
+		this.authenticated = authenticated;
 	}
 
 	branch(name: string) {
@@ -32,6 +48,12 @@ export class AzureDevOps implements Forge {
 
 	commitUrl(id: string): string {
 		return `${this.baseUrl}/commit/${id}`;
+	}
+
+	get user() {
+		return {
+			result: { status: 'uninitialized' as const, data: undefined }
+		} as ReactiveQuery<ForgeUser>;
 	}
 
 	get listService() {
@@ -51,6 +73,10 @@ export class AzureDevOps implements Forge {
 	}
 
 	get checks() {
+		return undefined;
+	}
+
+	invalidate(_tags: TagDescription<ReduxTag>[]) {
 		return undefined;
 	}
 }

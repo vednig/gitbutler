@@ -3,8 +3,12 @@ import { errorToLoadable } from '$lib/network/loadable';
 import { repositoryIdLookupTable } from '$lib/organizations/repositoryIdLookupsSlice';
 import { stringifyProjectIdentity } from '$lib/organizations/types';
 import { POLLING_GLACIALLY } from '$lib/polling';
+import { InjectionToken } from '@gitbutler/core/context';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
+
+export const REPOSITORY_ID_LOOKUP_SERVICE: InjectionToken<RepositoryIdLookupService> =
+	new InjectionToken('RepositoryIdLookupService');
 
 export class RepositoryIdLookupService {
 	private readonly projectLookupInterests = new InterestStore<{ identity: string }>(
@@ -38,7 +42,7 @@ export class RepositoryIdLookupService {
 					);
 				} catch (error: unknown) {
 					this.appDispatch.dispatch(
-						repositoryIdLookupTable.upsertOne(errorToLoadable(error, identity))
+						repositoryIdLookupTable.addOne(errorToLoadable(error, identity))
 					);
 				}
 			})

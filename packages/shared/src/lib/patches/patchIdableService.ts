@@ -3,6 +3,7 @@ import { errorToLoadable } from '$lib/network/loadable';
 import { patchIdableTable } from '$lib/patches/patchIdablesSlice';
 import { upsertPatchSections } from '$lib/patches/patchSectionsSlice';
 import { apiToPatch, apiToSection, patchIdableId, type ApiPatchIdable } from '$lib/patches/types';
+import { InjectionToken } from '@gitbutler/core/context';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
 
@@ -12,6 +13,10 @@ type PatchIdableParams = {
 	oldVersion?: number;
 	newVersion: number;
 };
+
+export const PATCH_IDABLE_SERVICE: InjectionToken<PatchIdableService> = new InjectionToken(
+	'PatchIdableService'
+);
 
 export class PatchIdableService {
 	// We don't want to specify a polling frequency, because diffs are constat data.
@@ -56,7 +61,7 @@ export class PatchIdableService {
 						patchIdableTable.upsertOne({ status: 'found', id: key, value: patch })
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(patchIdableTable.upsertOne(errorToLoadable(error, key)));
+					this.appDispatch.dispatch(patchIdableTable.addOne(errorToLoadable(error, key)));
 				}
 			})
 			.createInterest();

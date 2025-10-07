@@ -1,22 +1,23 @@
 <script lang="ts">
 	import InfoMessage from '$components/InfoMessage.svelte';
 	import SectionCardDisclaimer from '$components/SectionCardDisclaimer.svelte';
-	import { GitConfigService } from '$lib/config/gitConfigService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import Link from '@gitbutler/ui/link/Link.svelte';
+	import { OnboardingEvent, POSTHOG_WRAPPER } from '$lib/analytics/posthog';
+	import { GIT_CONFIG_SERVICE } from '$lib/config/gitConfigService';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, Icon, Link } from '@gitbutler/ui';
 	import { slide } from 'svelte/transition';
 
 	interface Props {
 		projectId: string;
+		disabled: boolean;
 		remoteName: string | null | undefined;
 		branchName: string | null | undefined;
 	}
 
-	const { projectId, remoteName, branchName }: Props = $props();
+	const { projectId, remoteName, branchName, disabled }: Props = $props();
 
-	const gitConfig = getContext(GitConfigService);
+	const gitConfig = inject(GIT_CONFIG_SERVICE);
+	const posthog = inject(POSTHOG_WRAPPER);
 
 	type Check = { name: string; promise: Promise<any> };
 	let checks = $state<Check[]>();
@@ -27,6 +28,7 @@
 
 	async function checkCredentials() {
 		if (!remoteName || !branchName) return;
+		posthog.capture(OnboardingEvent.GitCheckCredentials);
 		loading = true;
 		errors = 0;
 		checks = [];
@@ -39,6 +41,7 @@
 			checks = [...checks, { name: 'Push', promise: pushCheck }];
 			await pushCheck;
 		} catch {
+			posthog.capture(OnboardingEvent.GitCheckCredentialsFailed);
 			errors = 1;
 		} finally {
 			loading = false;
@@ -54,7 +57,7 @@
 	{#if checks && checks.length > 0}
 		<div transition:slide={{ duration: 250 }}>
 			<InfoMessage
-				style={errors > 0 ? 'warning' : loading ? 'neutral' : 'success'}
+				style={errors > 0 ? 'warning' : loading ? 'info' : 'success'}
 				filled
 				outlined={false}
 			>
@@ -108,7 +111,7 @@
 			</InfoMessage>
 		</div>
 	{/if}
-	<Button style="pop" wide icon="item-tick" disabled={loading} onclick={checkCredentials}>
+	<Button style="pop" wide icon="item-tick" {loading} {disabled} onclick={checkCredentials}>
 		{#if loading || checks?.length === 0}
 			Test credentials
 		{:else}
@@ -132,8 +135,8 @@
 	.checks-list {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
 		margin-top: 4px;
+		gap: 4px;
 	}
 
 	.check-icon {

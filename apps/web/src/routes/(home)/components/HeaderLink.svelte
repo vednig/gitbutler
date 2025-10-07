@@ -41,13 +41,13 @@
 			xmlns="http://www.w3.org/2000/svg"
 		>
 			<path
-				class="dropdown-icon__arrow-top"
+				class="dropdown-icon__arrow-up"
 				d="M10.5156 10L6.01562 14L1.51562 10"
 				stroke="black"
 				stroke-width="1.5"
 			/>
 			<path
-				class="dropdown-icon__arrow-bottom"
+				class="dropdown-icon__arrow-down"
 				d="M10.5156 6L6.01563 2L1.51562 6"
 				stroke="black"
 				stroke-width="1.5"
@@ -74,21 +74,21 @@
 
 <style lang="scss">
 	.link {
-		user-select: none;
-		position: relative;
-		cursor: pointer;
 		display: flex;
+		position: relative;
 		align-items: center;
 		padding: 10px 12px;
-		border-radius: 8px;
 		gap: 8px;
-		font-size: 18px;
-		font-weight: 500;
+		border-radius: 8px;
+		background-color: transparent;
 		color: var(--clr-black);
+		font-weight: 500;
+		font-size: 18px;
 		text-decoration: none;
 		text-transform: uppercase;
-		background-color: transparent;
+		cursor: pointer;
 		transition: background-color 0.05s ease-in-out;
+		user-select: none;
 
 		&:hover {
 			background-color: color-mix(in srgb, var(--clr-gray), var(--clr-white) 50%);
@@ -98,8 +98,8 @@
 	.link-dropdown {
 		&:hover {
 			.dropdown-wrapper {
-				opacity: 1;
 				transform: translateY(0);
+				opacity: 1;
 				pointer-events: auto;
 			}
 		}
@@ -108,13 +108,13 @@
 	.dropdown-wrapper {
 		z-index: 10;
 		position: absolute;
-		right: 0;
 		top: 100%;
+		right: 0;
 		padding-top: 6px;
+		transform: translateY(-8px);
+		opacity: 0;
 
 		pointer-events: none;
-		opacity: 0;
-		transform: translateY(-8px);
 
 		transition:
 			opacity 0.1s ease-in-out,
@@ -124,25 +124,25 @@
 	.dropdown-container {
 		// display: none;
 		position: relative;
-		background-color: var(--clr-white);
-		padding: 12px;
-		border-radius: 12px;
 		width: max-content;
+		padding: 12px;
 		border: 1px solid var(--clr-gray);
+		border-radius: 12px;
+		background-color: var(--clr-white);
 		box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.08);
 
 		:global(a) {
 			display: flex;
-			gap: 16px;
 			align-items: center;
 			justify-content: space-between;
 			padding: 8px;
+			gap: 16px;
+			border-radius: 6px;
 			color: var(--clr-black);
+			font-weight: 500;
+			font-size: 16px;
 			text-decoration: none;
 			text-transform: uppercase;
-			font-size: 16px;
-			font-weight: 500;
-			border-radius: 6px;
 			transition: background-color 0.05s ease-in-out;
 
 			&:hover {
@@ -156,8 +156,8 @@
 		}
 
 		:global(svg) {
-			opacity: 0;
 			transform: scale(0.8);
+			opacity: 0;
 			transition:
 				opacity 0.05s ease-in-out,
 				transform 0.2s ease-in-out;

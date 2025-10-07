@@ -1,22 +1,24 @@
 import { resetSentry, setSentryUser } from '$lib/analytics/sentry';
-import { invoke } from '$lib/backend/ipc';
 import { showError } from '$lib/notifications/toasts';
-import { User } from '$lib/user/user';
 import { sleep } from '$lib/utils/sleep';
-import { openExternalUrl } from '$lib/utils/url';
-import { copyToClipboard } from '@gitbutler/shared/clipboard';
+import { InjectionToken } from '@gitbutler/core/context';
 import { type HttpClient } from '@gitbutler/shared/network/httpClient';
-import { plainToInstance } from 'class-transformer';
 import { derived, get, readable, writable, type Readable } from 'svelte/store';
 import type { PostHogWrapper } from '$lib/analytics/posthog';
+import type { IBackend } from '$lib/backend';
 import type { TokenMemoryService } from '$lib/stores/tokenMemoryService';
+import type { User } from '$lib/user/user';
 import type { ApiUser } from '@gitbutler/shared/users/types';
 
 export type LoginToken = {
+	/** Used for polling the user; should NEVER be sent to the browser. */
 	token: string;
+	browser_token: string;
 	expires: string;
 	url: string;
 };
+
+export const USER_SERVICE = new InjectionToken<UserService>('UserService');
 
 export class UserService {
 	readonly loading = writable(false);
@@ -37,15 +39,16 @@ export class UserService {
 	readonly error = writable();
 
 	async refresh() {
-		const userData = await invoke<User | undefined>('get_user');
-		if (userData) {
-			const user = plainToInstance(User, userData);
+		const user = await this.backend.invoke<User | undefined>('get_user');
+		if (user) {
 			this.tokenMemoryService.setToken(user.access_token);
 			this.user.set(user);
-			this.posthog.setPostHogUser({ id: user.id, email: user.email, name: user.name });
+			await this.posthog.setPostHogUser({ id: user.id, email: user.email, name: user.name });
 			setSentryUser(user);
 			return user;
 		}
+
+		this.posthog.setAnonymousPostHogUser();
 		this.user.set(undefined);
 	}
 	readonly accessToken$ = derived(this.user, (user) => {
@@ -56,6 +59,7 @@ export class UserService {
 	});
 
 	constructor(
+		private backend: IBackend,
 		private httpClient: HttpClient,
 		private tokenMemoryService: TokenMemoryService,
 		private posthog: PostHogWrapper
@@ -63,7 +67,7 @@ export class UserService {
 
 	async setUser(user: User | undefined) {
 		if (user) {
-			await invoke('set_user', { user });
+			await this.backend.invoke('set_user', { user });
 			this.tokenMemoryService.setToken(user.access_token);
 		} else {
 			await this.clearUser();
@@ -72,14 +76,14 @@ export class UserService {
 	}
 
 	private async clearUser() {
-		await invoke('delete_user');
+		await this.backend.invoke('delete_user');
 	}
 
 	async logout() {
 		await this.clearUser();
 		this.user.set(undefined);
 		this.tokenMemoryService.setToken(undefined);
-		this.posthog.resetPostHog();
+		await this.posthog.resetPostHog();
 		resetSentry();
 	}
 
@@ -112,14 +116,14 @@ export class UserService {
 
 	async login(aborted: Readable<boolean> = readable(false)): Promise<User | undefined> {
 		return await this.loginCommon((url) => {
-			openExternalUrl(url);
+			this.backend.openExternalUrl(url);
 		}, aborted);
 	}
 
 	async loginAndCopyLink(aborted: Readable<boolean> = readable(false)): Promise<User | undefined> {
 		return await this.loginCommon((url) => {
 			setTimeout(() => {
-				copyToClipboard(url);
+				this.backend.writeTextToClipboard(url);
 			}, 0);
 		}, aborted);
 	}

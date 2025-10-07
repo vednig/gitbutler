@@ -1,46 +1,53 @@
-import type { Tauri } from '$lib/backend/tauri';
+import { invalidatesItem, invalidatesList, providesItem, ReduxTag } from '$lib/state/tags';
+import { InjectionToken } from '@gitbutler/core/context';
+import type { IBackend } from '$lib/backend';
+import type { ClientState } from '$lib/state/clientState.svelte';
 
-export type GitCredentialCheck = {
-	error?: string;
-	name?: string;
-	ok: boolean;
-};
-
-export type CredentialCheckError = {
-	check: string;
-	message: string;
-};
+export const GIT_CONFIG_SERVICE = new InjectionToken<GitConfigService>('GitConfigService');
 
 export class GitConfigService {
-	constructor(private tauri: Tauri) {}
+	private api: ReturnType<typeof injectEndpoints>;
+
+	constructor(
+		private clientApi: ClientState,
+		private backend: IBackend
+	) {
+		this.api = injectEndpoints(clientApi.backendApi);
+	}
 	async get<T extends string>(key: string): Promise<T | undefined> {
-		return (await this.tauri.invoke<T | undefined>('git_get_global_config', { key })) || undefined;
+		return ((await this.api.endpoints.gitGetGlobalConfig.fetch({ key })) as T) ?? undefined;
 	}
 
 	async remove(key: string): Promise<undefined> {
-		return await this.tauri.invoke('git_remove_global_config', { key });
+		return await this.api.endpoints.gitRemoveGlobalConfig.mutate({ key });
 	}
 
 	async getWithDefault<T extends string>(key: string, defaultValue: T): Promise<T> {
-		const value = await this.tauri.invoke<T | undefined>('git_get_global_config', { key });
+		const value = await this.get<T>(key);
 		return value || defaultValue;
 	}
 
 	async set<T extends string>(key: string, value: T) {
-		return await this.tauri.invoke<T | undefined>('git_set_global_config', { key, value });
+		return await this.api.endpoints.gitSetGlobalConfig.mutate({ key, value });
+	}
+
+	invalidateGitConfig() {
+		this.clientApi.dispatch(
+			this.api.util.invalidateTags([invalidatesList(ReduxTag.GitConfigProperty)])
+		);
 	}
 
 	async getGbConfig(projectId: string): Promise<GbConfig> {
-		return await this.tauri.invoke<GbConfig>('get_gb_config', { projectId });
+		return await this.backend.invoke<GbConfig>('get_gb_config', { projectId });
 	}
 
 	async setGbConfig(projectId: string, config: GbConfig) {
-		return await this.tauri.invoke('set_gb_config', { projectId, config });
+		return await this.backend.invoke('set_gb_config', { projectId, config });
 	}
 
 	async checkGitFetch(projectId: string, remoteName: string | null | undefined) {
 		if (!remoteName) return;
-		const resp = await this.tauri.invoke<string>('git_test_fetch', {
+		const resp = await this.backend.invoke<string>('git_test_fetch', {
 			projectId: projectId,
 			action: 'modal',
 			remoteName
@@ -56,7 +63,7 @@ export class GitConfigService {
 		branchName: string | null | undefined
 	) {
 		if (!remoteName) return;
-		const resp = await this.tauri.invoke<string>('git_test_push', {
+		const resp = await this.backend.invoke<string>('git_test_push', {
 			projectId: projectId,
 			action: 'modal',
 			remoteName,
@@ -76,4 +83,34 @@ export class GbConfig {
 	signingFormat?: string | undefined;
 	gpgProgram?: string | undefined;
 	gpgSshProgram?: string | undefined;
+}
+
+function injectEndpoints(api: ClientState['backendApi']) {
+	return api.injectEndpoints({
+		endpoints: (build) => ({
+			gitGetGlobalConfig: build.query<unknown, { key: string }>({
+				keepUnusedDataFor: 30,
+				extraOptions: { command: 'git_get_global_config' },
+				query: (args) => args,
+				transformResponse: (response: unknown) => {
+					return response;
+				},
+				providesTags: (_result, _error, args) => providesItem(ReduxTag.GitConfigProperty, args.key)
+			}),
+			gitRemoveGlobalConfig: build.mutation<undefined, { key: string }>({
+				extraOptions: { command: 'git_remove_global_config' },
+				query: (args) => args,
+				invalidatesTags: (_result, _error, args) => [
+					invalidatesItem(ReduxTag.GitConfigProperty, args.key)
+				]
+			}),
+			gitSetGlobalConfig: build.mutation<unknown, { key: string; value: unknown }>({
+				extraOptions: { command: 'git_set_global_config' },
+				query: (args) => args,
+				invalidatesTags: (_result, _error, args) => [
+					invalidatesItem(ReduxTag.GitConfigProperty, args.key)
+				]
+			})
+		})
+	});
 }

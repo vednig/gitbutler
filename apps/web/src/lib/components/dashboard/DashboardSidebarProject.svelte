@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { getContext } from '@gitbutler/shared/context';
+	import { goto } from '$app/navigation';
+	import { inject } from '@gitbutler/core/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
 	import { isFound } from '@gitbutler/shared/network/loadable';
 	import {
 		getProjectByRepositoryId,
 		getRecentlyPushedProjects
 	} from '@gitbutler/shared/organizations/projectsPreview.svelte';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import { goto } from '$app/navigation';
+	import { WEB_ROUTES_SERVICE } from '@gitbutler/shared/routing/webRoutes.svelte';
+	import { Icon } from '@gitbutler/ui';
 
 	type Props = {
 		showOwner?: boolean;
@@ -18,7 +18,7 @@
 
 	const { showOwner = false, repositoryId, inRecentSection = true }: Props = $props();
 
-	const routes = getContext(WebRoutesService);
+	const routes = inject(WEB_ROUTES_SERVICE);
 
 	const project = $derived(getProjectByRepositoryId(repositoryId));
 	const projectPageParams = $derived(routes.isProjectPageSubset);
@@ -43,10 +43,9 @@
 
 <Loading loadable={project.current}>
 	{#snippet children(project)}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<div
-			class="project"
+		<button
+			type="button"
+			class="project-btn"
 			class:current={focused}
 			onclick={() => {
 				goto(routes.projectReviewPath({ ownerSlug: project.owner, projectSlug: project.slug }));
@@ -59,18 +58,18 @@
 					<Icon name="chevron-right"></Icon>
 				</div>
 			</div>
-		</div>
+		</button>
 	{/snippet}
 </Loading>
 
 <style lang="postcss">
-	.project {
+	.project-btn {
 		display: flex;
-
 		align-items: center;
-		cursor: pointer;
+		width: 100%;
 
 		gap: 9px;
+		cursor: pointer;
 
 		&.current {
 			.pip {
@@ -90,27 +89,26 @@
 	.pip {
 		width: 10px;
 		height: 18px;
-		border-radius: 5px;
 		margin-left: -5px;
+		border-radius: 5px;
 	}
 
 	.link-container {
-		flex-grow: 1;
-
 		display: flex;
+		flex-grow: 1;
 		align-items: center;
 		justify-content: space-between;
+		margin-right: 14px;
+
+		padding: 10px 14px;
 		gap: 10px;
 
 		border-radius: var(--radius-m);
-
-		padding: 10px 14px;
-		margin-right: 14px;
 	}
 
 	.icon {
 		display: none;
-		margin-right: -6px;
 		height: 16px;
+		margin-right: -6px;
 	}
 </style>

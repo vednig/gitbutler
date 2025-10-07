@@ -1,4 +1,5 @@
 import { page } from '$app/state';
+import { InjectionToken } from '@gitbutler/core/context';
 
 export interface OwnerParameters {
 	ownerSlug: string;
@@ -32,6 +33,10 @@ function isUrlSubset<T>(isWeb: boolean, id: string): T | undefined {
 	}
 }
 
+export const WEB_ROUTES_SERVICE: InjectionToken<WebRoutesService> = new InjectionToken(
+	'WebRoutesService'
+);
+
 export class WebRoutesService {
 	constructor(
 		private readonly baseUrl: string,
@@ -54,11 +59,39 @@ export class WebRoutesService {
 		return this.toUrl(this.homePath());
 	}
 
+	loginPath() {
+		return `/login`;
+	}
+	loginUrl() {
+		return this.toUrl(this.loginPath());
+	}
+
+	resetPasswordPath() {
+		return `/login/reset-password`;
+	}
+	resetPasswordUrl() {
+		return this.toUrl(this.resetPasswordPath());
+	}
+
+	signupPath() {
+		return `/signup`;
+	}
+	signupUrl() {
+		return this.toUrl(this.signupPath());
+	}
+
 	projectsPath() {
 		return `/`;
 	}
 	projectsUrl() {
 		return this.toUrl(this.projectsPath());
+	}
+
+	finalizeAccountPath() {
+		return '/profile/finalize';
+	}
+	finalizeAccountUrl() {
+		return this.toUrl(this.finalizeAccountPath());
 	}
 
 	// eslint-disable-next-line @typescript-eslint/no-empty-object-type

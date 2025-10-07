@@ -1,5 +1,7 @@
 use anyhow::{bail, Context, Result};
+use but_graph::VirtualBranchesTomlMetadata;
 use but_settings::AppSettings;
+use but_workspace::{ui::StackDetails, StackId, StacksFilter};
 use gitbutler_branch::{BranchCreateRequest, BranchIdentity, BranchUpdateRequest};
 use gitbutler_branch_actions::{get_branch_listing_details, list_branches, BranchManagerExt};
 use gitbutler_command_context::CommandContext;
@@ -11,7 +13,7 @@ use gitbutler_stack::{Stack, VirtualBranchesHandle};
 use crate::command::debug_print;
 
 pub fn list_commit_files(project: Project, commit_id_hex: String) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     let commit_id = gix::ObjectId::from_hex(commit_id_hex.as_bytes())?;
     debug_print(gitbutler_branch_actions::list_commit_files(
         &ctx,
@@ -20,23 +22,25 @@ pub fn list_commit_files(project: Project, commit_id_hex: String) -> Result<()> 
 }
 
 pub fn set_base(project: Project, short_tracking_branch_name: String) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
-    let branch_name = format!("refs/remotes/{}", short_tracking_branch_name)
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
+    let branch_name = format!("refs/remotes/{short_tracking_branch_name}")
         .parse()
         .context("Invalid branch name")?;
     debug_print(gitbutler_branch_actions::set_base_branch(
         &ctx,
         &branch_name,
+        false,
+        ctx.project().exclusive_worktree_access().write_permission(),
     )?)
 }
 
 pub fn list_all(project: Project) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     debug_print(list_branches(&ctx, None, None)?)
 }
 
 pub fn details(project: Project, branch_names: Vec<BranchIdentity>) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     debug_print(get_branch_listing_details(&ctx, branch_names)?)
 }
 
@@ -58,15 +62,47 @@ pub fn list(project: Project) -> Result<()> {
 }
 
 pub fn status(project: Project) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
-    debug_print(gitbutler_branch_actions::list_virtual_branches(&ctx)?)
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
+    debug_print(stacks(&ctx))
+}
+
+pub(crate) fn stacks(ctx: &CommandContext) -> Result<Vec<(StackId, StackDetails)>> {
+    let repo = ctx.gix_repo_for_merging_non_persisting()?;
+    let stacks = if ctx.app_settings().feature_flags.ws3 {
+        let meta = VirtualBranchesTomlMetadata::from_path(
+            ctx.project().gb_dir().join("virtual_branches.toml"),
+        )?;
+        but_workspace::stacks_v3(&repo, &meta, StacksFilter::default(), None)
+    } else {
+        but_workspace::stacks(ctx, &ctx.project().gb_dir(), &repo, StacksFilter::default())
+    }?;
+    let mut details = vec![];
+    for stack in stacks {
+        let stack_id = stack
+            .id
+            .context("BUG(opt-stack-id): CLI code shouldn't trigger this")?;
+        details.push((
+            stack_id,
+            if ctx.app_settings().feature_flags.ws3 {
+                let meta = VirtualBranchesTomlMetadata::from_path(
+                    ctx.project().gb_dir().join("virtual_branches.toml"),
+                )?;
+                but_workspace::stack_details_v3(stack_id.into(), &repo, &meta)
+            } else {
+                but_workspace::stack_details(&ctx.project().gb_dir(), stack_id, ctx)
+            }?,
+        ));
+    }
+    Ok(details)
 }
 
 pub fn unapply(project: Project, branch_name: String) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     let stack = stack_by_name(&project, &branch_name)?;
-    debug_print(gitbutler_branch_actions::save_and_unapply_virutal_branch(
-        &ctx, stack.id,
+    debug_print(gitbutler_branch_actions::unapply_stack(
+        &ctx,
+        stack.id,
+        Vec::new(),
     )?)
 }
 
@@ -80,7 +116,7 @@ pub fn apply(project: Project, branch_name: String, from_branch: bool) -> Result
 
 fn apply_by_name(project: Project, branch_name: String) -> Result<()> {
     let stack = stack_by_name(&project, &branch_name)?;
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     let mut guard = project.exclusive_worktree_access();
     debug_print(
         ctx.branch_manager().create_virtual_branch_from_branch(
@@ -105,7 +141,7 @@ fn apply_from_branch(project: Project, branch_name: String) -> Result<()> {
         refname
     };
 
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
 
     let mut guard = project.exclusive_worktree_access();
     debug_print(ctx.branch_manager().create_virtual_branch_from_branch(
@@ -117,13 +153,14 @@ fn apply_from_branch(project: Project, branch_name: String) -> Result<()> {
 }
 
 pub fn create(project: Project, branch_name: String, set_default: bool) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     let new_stack_entry = gitbutler_branch_actions::create_virtual_branch(
         &ctx,
         &BranchCreateRequest {
             name: Some(branch_name),
             ..Default::default()
         },
+        ctx.project().exclusive_worktree_access().write_permission(),
     )?;
     if set_default {
         let new = VirtualBranchesHandle::new(project.gb_dir()).get_stack(new_stack_entry.id)?;
@@ -138,11 +175,11 @@ pub fn set_default(project: Project, branch_name: String) -> Result<()> {
 }
 
 fn set_default_branch(project: &Project, stack: &Stack) -> Result<()> {
-    let ctx = CommandContext::open(project, AppSettings::default())?;
+    let ctx = CommandContext::open(project, AppSettings::load_from_default_path_creating()?)?;
     gitbutler_branch_actions::update_virtual_branch(
         &ctx,
         BranchUpdateRequest {
-            id: stack.id,
+            id: Some(stack.id),
             name: None,
             notes: None,
             ownership: None,
@@ -156,59 +193,34 @@ fn set_default_branch(project: &Project, stack: &Stack) -> Result<()> {
 
 pub fn series(project: Project, stack_name: String, new_series_name: String) -> Result<()> {
     let mut stack = stack_by_name(&project, &stack_name)?;
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     stack.add_series_top_of_stack(&ctx, new_series_name, None)?;
     Ok(())
 }
 
 pub fn commit(project: Project, branch_name: String, message: String) -> Result<()> {
-    let ctx = CommandContext::open(&project, AppSettings::default())?;
+    let ctx = CommandContext::open(&project, AppSettings::load_from_default_path_creating()?)?;
     let stack = stack_by_name(&project, &branch_name)?;
-    let list_result = gitbutler_branch_actions::list_virtual_branches(&ctx)?;
+    let (_, d) = stacks(&ctx)?
+        .into_iter()
+        .find(|(i, _)| *i == stack.id)
+        .unwrap();
 
-    if !list_result.skipped_files.is_empty() {
-        eprintln!(
-            "{} files could not be processed (binary or large size)",
-            list_result.skipped_files.len()
-        )
-    }
+    let repo = ctx.gix_repo()?;
+    let worktree = but_core::diff::worktree_changes(&repo)?;
+    let file_changes: Vec<but_workspace::DiffSpec> =
+        worktree.changes.iter().map(Into::into).collect::<Vec<_>>();
 
-    let target_branch = list_result
-        .branches
-        .iter()
-        .find(|b| b.id == stack.id)
-        .expect("A populated branch exists for a branch we can list");
-    if target_branch.ownership.claims.is_empty() {
-        bail!(
-            "Branch '{branch_name}' has no change to commit{hint}",
-            hint = {
-                let candidate_names = list_result
-                    .branches
-                    .iter()
-                    .filter_map(|b| (!b.ownership.claims.is_empty()).then_some(b.name.as_str()))
-                    .collect::<Vec<_>>();
-                let mut candidates = candidate_names.join(", ");
-                if !candidate_names.is_empty() {
-                    candidates = format!(
-                        ". {candidates} {have} changes.",
-                        have = if candidate_names.len() == 1 {
-                            "has"
-                        } else {
-                            "have"
-                        }
-                    )
-                };
-                candidates
-            }
-        )
-    }
-
-    debug_print(gitbutler_branch_actions::create_commit(
+    let outcome = but_workspace::commit_engine::create_commit_simple(
         &ctx,
         stack.id,
-        &message,
-        Some(&target_branch.ownership),
-    )?)
+        None,
+        file_changes,
+        message,
+        d.derived_name,
+        ctx.project().exclusive_worktree_access().write_permission(),
+    )?;
+    debug_print(outcome)
 }
 
 fn stack_by_name(project: &Project, name: &str) -> Result<Stack> {

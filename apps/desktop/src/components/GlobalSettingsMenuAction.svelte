@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { settingsPath } from '$lib/routes/routes.svelte';
-	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
-	import { getContext } from '@gitbutler/shared/context';
-	import { goto } from '$app/navigation';
+	import { useSettingsModal } from '$lib/settings/settingsModal.svelte';
+	import { SHORTCUT_SERVICE } from '$lib/shortcuts/shortcutService';
+	import { inject } from '@gitbutler/core/context';
 
-	const shortcutService = getContext(ShortcutService);
-	shortcutService.on('global-settings', () => {
-		goto(settingsPath());
-	});
+	const shortcutService = inject(SHORTCUT_SERVICE);
+	const { openGeneralSettings } = useSettingsModal();
+
+	$effect(() =>
+		shortcutService.on('global-settings', () => {
+			openGeneralSettings();
+		})
+	);
 </script>

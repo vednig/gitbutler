@@ -2,18 +2,18 @@
 	"productName": "GitButler",
 	"identifier": "com.gitbutler.app",
 	"build": {
-		"beforeBuildCommand": "[ \"$CI\" = \"true\" ] || pnpm build:desktop -- --mode production && cargo build --release -p gitbutler-git && bash ./crates/gitbutler-tauri/inject-git-binaries.sh"
+		"beforeBuildCommand": "[ \"$CI\" = \"true\" ] || pnpm build:desktop -- --mode production && cargo build --release -p gitbutler-git && cargo build --release -p but-testing && cargo build --release -p but && bash ./crates/gitbutler-tauri/inject-git-binaries.sh"
 	},
 	"bundle": {
 		"active": true,
 		"icon": [
-			"icons/32x32.png",
-			"icons/128x128.png",
-			"icons/128x128@2x.png",
-			"icons/icon.icns",
-			"icons/icon.ico"
+			"icons/release/32x32.png",
+			"icons/release/128x128.png",
+			"icons/release/128x128@2x.png",
+			"icons/release/icon.icns",
+			"icons/release/icon.ico"
 		],
-		"externalBin": ["gitbutler-git-setsid", "gitbutler-git-askpass"]
+		"externalBin": ["gitbutler-git-setsid", "gitbutler-git-askpass", "but-testing", "but"]
 	},
 	"plugins": {
 		"updater": {

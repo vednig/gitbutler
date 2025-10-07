@@ -1,18 +1,14 @@
 <script lang="ts">
-	import { getContext } from '$lib/context';
 	import Loading from '$lib/network/Loading.svelte';
 	import { isFound } from '$lib/network/loadable';
-	import { OrganizationService } from '$lib/organizations/organizationService';
+	import { ORGANIZATION_SERVICE } from '$lib/organizations/organizationService';
 	import { getOrganizationBySlug } from '$lib/organizations/organizationsPreview.svelte';
 	import { getProjectByRepositoryId } from '$lib/organizations/projectsPreview.svelte';
-	import { UserService } from '$lib/users/userService';
+	import { APP_STATE } from '$lib/redux/store.svelte';
+	import { USER_SERVICE } from '$lib/users/userService';
 	import { getUserByLogin } from '$lib/users/usersPreview.svelte';
-	import { AppState } from '$lib/redux/store.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
-	import Avatar from '@gitbutler/ui/avatar/Avatar.svelte';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, Modal, SectionCard, Textbox, Avatar } from '@gitbutler/ui';
 
 	type Props = {
 		slug: string;
@@ -20,9 +16,9 @@
 
 	const { slug }: Props = $props();
 
-	const appState = getContext(AppState);
-	const organizationService = getContext(OrganizationService);
-	const userService = getContext(UserService);
+	const appState = inject(APP_STATE);
+	const organizationService = inject(ORGANIZATION_SERVICE);
+	const userService = inject(USER_SERVICE);
 
 	const organization = $derived(getOrganizationBySlug(appState, organizationService, slug));
 
@@ -102,8 +98,8 @@
 <style lang="postcss">
 	.header-with-action {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		justify-content: space-between;
 
 		margin-bottom: 8px;
 	}

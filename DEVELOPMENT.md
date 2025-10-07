@@ -16,6 +16,7 @@ you right. Let's get started.
 - [Debugging](#debugging)
   - [Logs](#logs)
   - [Tokio](#tokio)
+- [Troubleshooting](#troubleshooting)
 - [Building](#building)
   - [Building on Windows](#building-on-windows)
     - [File permissions](#file-permissions)
@@ -45,6 +46,8 @@ filesystem access part, Tauri uses [Rust](https://www.rust-lang.org/).
 So everything that hits disk is in Rust, everything that the
 user sees is in HTML/JS. Specifically we use [Svelte](https://svelte.dev/)
 in Typescript for that layer.
+
+For a deep dive into the architecture, see [DEEPWIKI](https://deepwiki.com/gitbutlerapp/gitbutler).
 
 ---
 
@@ -220,6 +223,74 @@ We are also collecting tokio's runtime tracing information that could be viewed 
 
 ---
 
+## Troubleshooting
+
+Common issues and solutions when developing GitButler.
+
+### Turbo/build issues
+
+#### Case-sensitive volume problems
+
+If you're experiencing issues with the `dev:desktop` target failing to start, especially on macOS with case-sensitive filesystems, this may be related to Turborepo's handling of case-sensitive volumes.
+
+**Solution:** See the related issue at [vercel/turborepo#8491](https://github.com/vercel/turborepo/issues/8491) for current workarounds.
+
+#### Turbo daemon issues
+
+If builds are hanging or behaving unexpectedly:
+
+```bash
+# Stop the turbo daemon
+pnpm exec turbo daemon stop
+
+# Clear turbo cache
+pnpm exec turbo daemon clean
+
+# Restart development
+pnpm dev:desktop
+```
+
+### Cache issues
+
+If you're seeing stale builds or unexpected behavior:
+
+```bash
+rm -rf .turbo node_modules
+pnpm install
+# Optional (Rust artifacts):
+cargo clean
+```
+
+### Node.js & pnpm
+
+Use the Node version pinned by `.nvmrc` (currently LTS “jod” / Node 22):
+
+```bash
+nvm install
+nvm use
+node -v
+```
+
+Use pnpm via Corepack (avoid global installs):
+
+```bash
+corepack enable
+corepack pnpm -v
+# optionally pin a major:
+corepack prepare pnpm@10 --activate
+```
+
+### Additional resources
+
+For issues specific to our toolchain components:
+
+- [Turborepo issues](https://github.com/vercel/turborepo/issues)
+- [Tauri issues](https://github.com/tauri-apps/tauri/issues)
+
+If none of these solutions work, please check our [GitHub Issues](https://github.com/gitbutlerapp/gitbutler/issues) or create a new issue with detailed information about your system and the error you're encountering.
+
+---
+
 ## Building
 
 To build the app in production mode, run:
@@ -255,7 +326,7 @@ rustup override add nightly
 
 We use `pnpm`, which requires a relatively recent version of Node.js.
 Make sure that the latest stable version of Node.js is installed and
-on the PATH, and then `npm i -g pnpm`.
+on the PATH, and then `npm install -g pnpm`.
 
 Sometimes npm's prefix is incorrect on Windows, we can check this via:
 
@@ -285,6 +356,21 @@ Note that it might appear that the build has hung or frozen on the `openssl-sys`
 It's not, it's just that Cargo can't report the status of a C/C++ build happening
 under the hood, and openssl is _large_. It'll take a while to compile.
 
+#### OpenSSL
+
+To build it, one needs to export the path to the perl installation to use.
+The line below will do the trick in a git-bash.
+
+```bash
+export OPENSSL_SRC_PERL="c:/Strawberry/perl/bin/perl.exe"
+```
+
+To make this change permanent, one would one can add this change (and others) to the `~/.bash_profile`.
+
+```bash
+echo 'export OPENSSL_SRC_PERL="c:/Strawberry/perl/bin/perl.exe"' >> ~/.bash_profile
+```
+
 #### Crosscompilation
 
 This paragraph is about crosscompilation to x86_64-MSVC from ARM Windows,
@@ -302,6 +388,7 @@ to prepare the environment.
 ```bash
 export TRIPLE_OVERRIDE=x86_64-pc-windows-msvc
 export CARGO_BUILD_TARGET=x86_64-pc-windows-msvc
+# for good measure
 export OPENSSL_SRC_PERL="c:/Strawberry/perl/bin/perl.exe"
 ```
 

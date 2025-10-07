@@ -1,8 +1,8 @@
 <script lang="ts">
 	import Content from '$components/Content.svelte';
-	import { PromptService } from '$lib/ai/promptService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
+	import { PROMPT_SERVICE } from '$lib/ai/promptService';
+	import { inject } from '@gitbutler/core/context';
+	import { Button } from '@gitbutler/ui';
 	import { get } from 'svelte/store';
 	import type { Prompts, UserPrompt } from '$lib/ai/types';
 
@@ -12,7 +12,7 @@
 
 	const { promptUse }: Props = $props();
 
-	const promptService = getContext(PromptService);
+	const promptService = inject(PROMPT_SERVICE);
 
 	let prompts = $state<Prompts>();
 
@@ -69,8 +69,8 @@
 <style lang="postcss">
 	.prompt-item__title {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		justify-content: space-between;
 		gap: 24px;
 	}
 

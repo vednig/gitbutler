@@ -4,9 +4,9 @@ version = "0.0.0"
 edition = "2021"
 authors = ["GitButler <gitbutler@gitbutler.com>"]
 publish = false
-
+rust-version = "1.89"
 [dependencies]
-anyhow = "1.0.95"
+anyhow = "1.0.100"
 tracing.workspace = true
 itertools = "0.14"
 git2.workspace = true

@@ -1,14 +1,11 @@
 //! Implement the file-monitoring agent that informs about changes in interesting locations.
-#![deny(unsafe_code, rust_2018_idioms)]
+#![deny(unsafe_code)]
 #![allow(clippy::doc_markdown, clippy::missing_errors_doc)]
 
-mod events;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use but_settings::AppSettingsWithDiskSync;
-use events::InternalEvent;
-pub use events::{Action, Change};
 use gitbutler_project::ProjectId;
 pub use handler::Handler;
 use tokio::{
@@ -17,13 +14,14 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-mod file_monitor;
+mod events;
+pub use events::Change;
+use gitbutler_filemonitor::InternalEvent;
+
 mod handler;
 
 /// An abstraction over a link to the spawned watcher, which runs in the background.
 pub struct WatcherHandle {
-    /// A way to post events and interact with the actual handler in the background.
-    tx: UnboundedSender<InternalEvent>,
     /// The id of the project we are watching.
     project_id: ProjectId,
     signal_flush: UnboundedSender<()>,
@@ -38,14 +36,6 @@ impl Drop for WatcherHandle {
 }
 
 impl WatcherHandle {
-    /// Post an `action` for the watcher to perform.
-    pub fn post(&self, action: Action) -> Result<()> {
-        self.tx
-            .send(action.into())
-            .context("failed to send event")?;
-        Ok(())
-    }
-
     /// Return the id of the project we are watching.
     pub fn project_id(&self) -> ProjectId {
         self.project_id
@@ -81,11 +71,11 @@ pub fn watch_in_background(
     let (events_out, mut events_in) = unbounded_channel();
     let (flush_tx, mut flush_rx) = unbounded_channel();
 
-    let debounce = file_monitor::spawn(project_id, worktree_path.as_ref(), events_out.clone())?;
+    let debounce =
+        gitbutler_filemonitor::spawn(project_id, worktree_path.as_ref(), events_out.clone())?;
 
     let cancellation_token = CancellationToken::new();
     let handle = WatcherHandle {
-        tx: events_out,
         project_id,
         signal_flush: flush_tx,
         cancellation_token: cancellation_token.clone(),

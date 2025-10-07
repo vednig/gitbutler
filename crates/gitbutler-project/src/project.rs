@@ -87,6 +87,9 @@ pub struct Project {
     /// for example, when updating base branch
     #[serde(default)]
     pub ok_with_force_push: DefaultTrue,
+    /// Force push protection uses safer force push flags instead of doing straight force pushes
+    #[serde(default)]
+    pub force_push_protection: bool,
     pub api: Option<ApiProject>,
     #[serde(default)]
     pub gitbutler_data_last_fetch: Option<FetchResult>,
@@ -98,6 +101,8 @@ pub struct Project {
     pub omit_certificate_check: Option<bool>,
     // The number of changed lines that will trigger a snapshot
     pub snapshot_lines_threshold: Option<usize>,
+    #[serde(default)]
+    pub forge_override: Option<String>,
 }
 
 /// Instantiation
@@ -112,6 +117,26 @@ impl Project {
             path: worktree_dir,
             ..Default::default()
         })
+    }
+    /// Finds an existing project by its path. Errors out if not found.
+    pub fn find_by_path(path: &Path) -> anyhow::Result<Project> {
+        let projects = crate::list()?;
+        let resolved_path = if path.is_relative() {
+            path.canonicalize().context("Failed to canonicalize path")?
+        } else {
+            path.to_path_buf()
+        };
+        let project = projects
+            .into_iter()
+            .find(|p| {
+                // Canonicalize project path for comparison
+                match p.path.canonicalize() {
+                    Ok(proj_canon) => proj_canon == resolved_path,
+                    Err(_) => false,
+                }
+            })
+            .context("No project found with the given path")?;
+        Ok(project)
     }
 }
 
@@ -155,5 +180,57 @@ impl Project {
 
     pub fn worktree_path(&self) -> PathBuf {
         self.path.clone()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, strum::Display)]
+#[serde(rename_all = "camelCase", tag = "type", content = "subject")]
+pub enum AddProjectOutcome {
+    Added(Project),
+    AlreadyExists(Project),
+    PathNotFound,
+    NotADirectory,
+    BareRepository,
+    NonMainWorktree,
+    NoWorkdir,
+    NoDotGitDirectory,
+    NotAGitRepository(String),
+}
+
+impl AddProjectOutcome {
+    /// This is for tests only.
+    ///
+    /// Unwraps the `Project` if the project was actually added.
+    /// Panics if it was not.
+    pub fn unwrap_project(self) -> Project {
+        match self {
+            AddProjectOutcome::Added(p) => p,
+            _ => panic!("called `AddProjectOutcome::unwrap_project()` on a non-project outcome"),
+        }
+    }
+
+    /// Try to get the `Project`, returning an error if it was not added.
+    pub fn try_project(self) -> anyhow::Result<Project> {
+        match self {
+            AddProjectOutcome::Added(p) => Ok(p),
+            AddProjectOutcome::AlreadyExists(_) => Err(anyhow::anyhow!("project already exists")),
+            AddProjectOutcome::PathNotFound => Err(anyhow::anyhow!("project path not found")),
+            AddProjectOutcome::NotADirectory => {
+                Err(anyhow::anyhow!("project path is not a directory"))
+            }
+            AddProjectOutcome::BareRepository => {
+                Err(anyhow::anyhow!("bare repositories are not supported"))
+            }
+            AddProjectOutcome::NonMainWorktree => {
+                Err(anyhow::anyhow!("non-main worktrees are not supported"))
+            }
+            AddProjectOutcome::NoWorkdir => Err(anyhow::anyhow!("no workdir found for repository")),
+            AddProjectOutcome::NoDotGitDirectory => {
+                Err(anyhow::anyhow!("no .git directory found in repository"))
+            }
+            AddProjectOutcome::NotAGitRepository(msg) => {
+                Err(anyhow::anyhow!("not a git repository: {}", msg))
+            }
+        }
     }
 }

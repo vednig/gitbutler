@@ -9,10 +9,10 @@
 <script lang="ts">
 	import { getEditor } from '$lib/richText/context';
 	import { insertTextAtCaret } from '$lib/richText/selection';
-	import { COMMAND_PRIORITY_CRITICAL, DROP_COMMAND } from 'lexical';
+	import { COMMAND_PRIORITY_CRITICAL, DROP_COMMAND, PASTE_COMMAND } from 'lexical';
 
 	type Props = {
-		onDrop: (files: FileList | undefined) => Promise<DropFileResult[]>;
+		onDrop: (files: FileList | undefined) => Promise<DropFileResult[] | undefined>;
 	};
 
 	const { onDrop }: Props = $props();
@@ -35,6 +35,7 @@
 		if (!files) return;
 
 		const results = await onDrop(files);
+		if (!results) return;
 		results.forEach((result) => {
 			const embed = embedDroppedFile(result);
 			insertTextAtCaret(editor, `${embed}\n`);
@@ -42,7 +43,7 @@
 	}
 
 	$effect(() => {
-		return editor.registerCommand(
+		const unregisterDrop = editor.registerCommand(
 			DROP_COMMAND,
 			(e) => {
 				e.preventDefault();
@@ -54,6 +55,31 @@
 			},
 			COMMAND_PRIORITY_CRITICAL
 		);
+
+		const unregisterPaste = editor.registerCommand(
+			PASTE_COMMAND,
+			(e) => {
+				const clipboardEvent = e as ClipboardEvent;
+				const files = clipboardEvent.clipboardData?.files;
+
+				if (files && files.length > 0) {
+					e.preventDefault();
+					e.stopPropagation();
+
+					handleDrop(files);
+
+					return true;
+				}
+
+				return false;
+			},
+			COMMAND_PRIORITY_CRITICAL
+		);
+
+		return () => {
+			unregisterDrop();
+			unregisterPaste();
+		};
 	});
 
 	export async function handleFileUpload(files: FileList | null) {

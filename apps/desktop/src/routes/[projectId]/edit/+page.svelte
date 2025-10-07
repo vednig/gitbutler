@@ -1,25 +1,29 @@
 <script lang="ts">
-	import EditMode from '$components/EditMode.svelte';
-	import { ModeService, type EditModeMetadata } from '$lib/mode/modeService';
-	import { Project } from '$lib/project/project';
-	import { getContext } from '@gitbutler/shared/context';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import EditMode from '$components/EditMode.svelte';
+	import { MODE_SERVICE, type EditModeMetadata } from '$lib/mode/modeService';
+	import { inject } from '@gitbutler/core/context';
+	import { isDefined } from '@gitbutler/ui/utils/typeguards';
 
-	const modeService = getContext(ModeService);
-	const project = getContext(Project);
-	const mode = modeService.mode;
+	// TODO: Refactor so we don't need non-null assertion.
+	const projectId = $derived(page.params.projectId!);
+	const modeService = inject(MODE_SERVICE);
+	const mode = $derived(modeService.mode({ projectId }));
 
 	let editModeMetadata = $state<EditModeMetadata>();
 
 	$effect(() => {
-		if ($mode?.type === 'Edit') {
-			editModeMetadata = $mode.subject;
+		if (!isDefined(mode.response)) return;
+
+		if (mode.response.type === 'Edit') {
+			editModeMetadata = mode.response.subject;
 		} else {
-			goto(`/${project.id}/board`);
+			goto(`/${projectId}`);
 		}
 	});
 </script>
 
 {#if editModeMetadata}
-	<EditMode {editModeMetadata} />
+	<EditMode {projectId} {editModeMetadata} />
 {/if}

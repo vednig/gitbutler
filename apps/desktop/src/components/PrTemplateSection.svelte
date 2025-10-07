@@ -1,78 +1,105 @@
 <script lang="ts">
-	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
-	import { TemplateService } from '$lib/forge/templateService';
-	import { Project } from '$lib/project/project';
-	import { getContext } from '@gitbutler/shared/context';
-	import { persisted } from '@gitbutler/shared/persisted';
-	import Select from '@gitbutler/ui/select/Select.svelte';
-	import SelectItem from '@gitbutler/ui/select/SelectItem.svelte';
+	import ReduxResult from '$components/ReduxResult.svelte';
+	import { STACK_SERVICE } from '$lib/stacks/stackService.svelte';
+	import { inject } from '@gitbutler/core/context';
+	import { Toggle, Select, SelectItem, TestId } from '@gitbutler/ui';
+	import type { Writable } from 'svelte/store';
 
 	interface Props {
-		templates: string[];
-		onselected: (body: string) => void;
+		projectId: string;
+		forgeName: string;
+		disabled: boolean;
+		template: {
+			enabled: Writable<boolean>;
+			path: Writable<string | undefined>;
+		};
+		onselect: (template: string) => void;
 	}
 
-	const { templates, onselected }: Props = $props();
+	const { projectId, forgeName, template, disabled, onselect }: Props = $props();
 
-	const forge = getContext(DefaultForgeFactory);
-	// TODO: Rename or refactor this service.
-	const templateService = getContext(TemplateService);
-	const project = getContext(Project);
+	const stackService = inject(STACK_SERVICE);
 
-	// The last template that was used. It is used as default if it is in the
-	// list of available commits.
-	const lastTemplate = persisted<string | undefined>(undefined, `last-template-${project.id}`);
+	const path = $derived(template.path);
+	const enabled = $derived(template.enabled);
 
-	async function setTemplate(path: string) {
-		lastTemplate.set(path);
-		loadAndEmit(path);
-	}
+	// Available pull request templates.
+	const templatesQuery = $derived(stackService.templates(projectId, forgeName));
 
-	async function loadAndEmit(path: string) {
-		if (path) {
-			const template = await templateService.getContent(forge.current.name, path);
-			if (template) {
-				onselected(template);
-			}
+	async function selectTemplate(newPath: string) {
+		const template = await stackService.template(projectId, forgeName, newPath);
+		if (template) {
+			path.set(newPath);
+			onselect(template);
 		}
 	}
 
-	$effect(() => {
-		if (templates) {
-			if ($lastTemplate && templates.includes($lastTemplate)) {
-				loadAndEmit($lastTemplate);
-			} else if (templates.length === 1) {
-				const path = templates.at(0);
-				if (path) {
-					loadAndEmit(path);
-					lastTemplate.set(path);
-				}
+	async function setEnabled(value: boolean) {
+		const ts = templatesQuery;
+		enabled.set(value);
+		if (value) {
+			const path = $path ? $path : ts.response?.at(0);
+			if (path) {
+				selectTemplate(path);
 			}
 		}
-	});
+	}
 </script>
 
-<div class="pr-template__wrap">
-	<Select
-		value={$lastTemplate}
-		options={templates.map((value) => ({ label: value, value }))}
-		placeholder={templates.length > 0 ? 'Choose template' : 'No PR templates found ¯_(ツ)_/¯'}
-		wide
-		searchable
-		disabled={templates.length === 0}
-		onselect={setTemplate}
-	>
-		{#snippet itemSnippet({ item, highlighted })}
-			<SelectItem selected={item.value === $lastTemplate} {highlighted}>
-				{item.label}
-			</SelectItem>
-		{/snippet}
-	</Select>
-</div>
+<ReduxResult {projectId} result={templatesQuery.result}>
+	{#snippet children(templates)}
+		{#if templates && templates.length > 0}
+			<div class="pr-template__wrap">
+				<label class="pr-template__toggle" for="pr-template-toggle">
+					<span class="text-13 text-semibold">Use template</span>
+					<Toggle
+						testId={TestId.ReviewTemplateToggle}
+						small
+						id="pr-template-toggle"
+						onchange={(checked) => setEnabled(checked)}
+						checked={$enabled}
+						disabled={templates.length === 0 || disabled}
+					/>
+				</label>
+				<Select
+					value={$path}
+					options={templates.map((value) => ({ label: value, value }))}
+					placeholder={templates.length > 0
+						? 'Choose template'
+						: 'No PR templates found ¯\\_(ツ)_/¯'}
+					flex="1"
+					searchable
+					disabled={!$enabled || templates.length === 0 || disabled}
+					onselect={(path) => selectTemplate(path)}
+				>
+					{#snippet itemSnippet({ item, highlighted })}
+						<SelectItem selected={item.value === $path} {highlighted}>
+							{item.label}
+						</SelectItem>
+					{/snippet}
+				</Select>
+			</div>
+		{/if}
+	{/snippet}
+</ReduxResult>
 
 <style lang="postcss">
 	.pr-template__wrap {
 		display: flex;
+		gap: 4px;
+	}
+
+	.pr-template__toggle {
+		display: flex;
+		align-items: center;
+		padding: 8px 10px;
 		gap: 6px;
+		border: 1px solid var(--clr-border-2);
+		border-radius: var(--radius-m);
+		transition: background-color var(--transition-fast);
+
+		&:hover {
+			background-color: var(--clr-bg-1-muted);
+		}
 	}
 </style>

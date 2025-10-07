@@ -4,7 +4,7 @@ import { Transform } from 'class-transformer';
 import 'reflect-metadata';
 
 export type CommitKey = {
-	stackId: string;
+	stackId?: string;
 	branchName: string;
 	commitId: string;
 	upstream: boolean;
@@ -64,7 +64,7 @@ export class DetailedCommit {
 	 */
 	dependentDiffs!: string[];
 
-	get status(): CommitStatus {
+	get status(): CommitStatusType {
 		if (this.isIntegrated) return 'Integrated';
 		if (this.isLocalAndRemote) return 'LocalAndRemote';
 		if (this.isRemote) return 'Remote';
@@ -111,7 +111,7 @@ export class Commit {
 		return splitMessage(this.description).description || undefined;
 	}
 
-	get status(): CommitStatus {
+	get status(): CommitStatusType {
 		return 'Remote';
 	}
 
@@ -127,9 +127,64 @@ export class Commit {
 export type AnyCommit = DetailedCommit | Commit;
 
 export interface Author {
+	id?: number;
 	email?: string;
 	name?: string;
 	gravatarUrl?: string;
 	isBot?: boolean;
 }
-export type CommitStatus = 'LocalOnly' | 'LocalAndRemote' | 'Integrated' | 'Remote';
+
+export enum CommitStatus {
+	LocalOnly = 'LocalOnly',
+	LocalAndRemote = 'LocalAndRemote',
+	Integrated = 'Integrated',
+	Remote = 'Remote',
+	Base = 'Base'
+}
+
+export type CommitStatusType = keyof typeof CommitStatus;
+
+export function commitStatusLabel(status: CommitStatusType): string {
+	switch (status) {
+		case CommitStatus.LocalOnly:
+			return 'Local';
+		case CommitStatus.LocalAndRemote:
+			return 'Local and remote';
+		case CommitStatus.Integrated:
+			return 'Integrated';
+		case CommitStatus.Remote:
+			return 'Remote';
+		case CommitStatus.Base:
+			return 'Base';
+		default:
+			return status;
+	}
+}
+
+export type MoveCommitIllegalAction =
+	| {
+			type: 'dependsOnCommits';
+			subject: string[];
+	  }
+	| {
+			type: 'hasDependentChanges';
+			subject: string[];
+	  }
+	| {
+			type: 'hasDependentUncommittedChanges';
+	  };
+
+function formatCommitIds(ids: string[]): string {
+	return ids.map((id) => id.slice(0, 7)).join('\n');
+}
+
+export function getMoveCommitIllegalActionMessage(action: MoveCommitIllegalAction): string {
+	switch (action.type) {
+		case 'dependsOnCommits':
+			return `Cannot move commit because it depends on the following commits: ${formatCommitIds(action.subject)}`;
+		case 'hasDependentChanges':
+			return `Cannot move commit because it has dependent changes: ${formatCommitIds(action.subject)}`;
+		case 'hasDependentUncommittedChanges':
+			return `Cannot move commit because it has dependent uncommitted changes`;
+	}
+}

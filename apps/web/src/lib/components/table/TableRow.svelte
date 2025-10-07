@@ -1,17 +1,18 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import Factoid from '$lib/components/infoFlexRow//Factoid.svelte';
 	import InfoFlexRow from '$lib/components/infoFlexRow/InfoFlexRow.svelte';
-	import Minimap from '$lib/components/review/Minimap.svelte';
 	import {
 		type ColumnTypes,
 		type AvatarsType,
 		type ChangesType
 	} from '$lib/components/table/types';
-	import CommitStatusBadge, { type CommitStatusType } from '@gitbutler/ui/CommitStatusBadge.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import AvatarGroup from '@gitbutler/ui/avatar/AvatarGroup.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
+	import Minimap from '@gitbutler/shared/branches/Minimap.svelte';
+	import { AvatarGroup, CommitStatusBadge, Icon, type CommitStatusType } from '@gitbutler/ui';
+
 	import dayjs from 'dayjs';
-	import { goto } from '$app/navigation';
 
 	type Props = {
 		columns: {
@@ -24,6 +25,9 @@
 		separatedTop?: boolean;
 		separatedBottom?: boolean;
 	};
+
+	const userService = inject(USER_SERVICE);
+	const user = userService.user;
 
 	let { columns, href, isTopEntry = false, separatedTop, separatedBottom }: Props = $props();
 	let tableMobileBreakpoint = 800;
@@ -72,12 +76,15 @@
 						{@const params = columns.find((col) => col.key === 'commitGraph')
 							?.value as ColumnTypes['commitGraph']}
 
-						<Minimap
-							branchUuid={params.branch.uuid}
-							projectSlug={params.projectSlug}
-							ownerSlug={params.ownerSlug}
-							horizontal
-						/>
+						{#if $user}
+							<Minimap
+								branchUuid={params.branch.uuid}
+								projectSlug={params.projectSlug}
+								ownerSlug={params.ownerSlug}
+								horizontal
+								user={$user}
+							/>
+						{/if}
 					{:else if key === 'avatars'}
 						<AvatarGroup avatars={value as Array<AvatarsType>}></AvatarGroup>
 					{:else if key === 'reviewers'}
@@ -202,15 +209,18 @@
 
 					{#if columns.find((col) => col.key === 'commitGraph')}
 						<Factoid label="Commits">
-							{@const props = columns.find((col) => col.key === 'commitGraph')
+							{@const params = columns.find((col) => col.key === 'commitGraph')
 								?.value as ColumnTypes['commitGraph']}
 
-							<Minimap
-								branchUuid={props.branch.uuid}
-								projectSlug={props.projectSlug}
-								ownerSlug={props.ownerSlug}
-								horizontal
-							/>
+							{#if $user}
+								<Minimap
+									branchUuid={params.branch.uuid}
+									projectSlug={params.projectSlug}
+									ownerSlug={params.ownerSlug}
+									horizontal
+									user={$user}
+								/>
+							{/if}
 						</Factoid>
 					{/if}
 
@@ -236,13 +246,13 @@
 		}
 
 		&:first-child .dyncell-td {
-			border-top-left-radius: var(--radius-ml);
 			border-top-right-radius: var(--radius-ml);
+			border-top-left-radius: var(--radius-ml);
 		}
 
 		&:last-child .dyncell-td {
-			border-bottom-left-radius: var(--radius-ml);
 			border-bottom-right-radius: var(--radius-ml);
+			border-bottom-left-radius: var(--radius-ml);
 		}
 
 		&:hover {
@@ -276,12 +286,12 @@
 	.dynclmn {
 		display: flex;
 		align-items: center;
+		height: 58px;
 
 		padding: 0 var(--cell-padding);
-		height: 58px;
-		color: var(--clr-text-2);
-		background-color: var(--clr-bg-1);
 		border-bottom: 1px solid var(--clr-border-2);
+		background-color: var(--clr-bg-1);
+		color: var(--clr-text-2);
 		transition: background-color var(--transition-fast);
 	}
 
@@ -295,17 +305,17 @@
 		text-align: right;
 	}
 	.dynclmn-changes_deletions {
+		padding-left: 6px;
 		color: var(--clr-theme-err-element);
 		text-align: right;
-		padding-left: 6px;
 	}
 
 	/* COMMENTS CLMN */
 	.dynclmn-comments {
 		display: flex;
-		gap: 5px;
-		justify-content: flex-end;
 		align-items: center;
+		justify-content: flex-end;
+		gap: 5px;
 	}
 
 	.dynclmn-comments-icon {
@@ -327,10 +337,10 @@
 	}
 
 	.dynclmn-number {
-		font-family: var(--fontfamily-mono);
-		font-size: 12px;
-		text-align: right;
 		justify-content: flex-end;
+		font-size: 12px;
+		font-family: var(--fontfamily-mono);
+		text-align: right;
 	}
 
 	.dynclmn-commitGraph-td {

@@ -1,24 +1,30 @@
+import { EventContext } from '$lib/analytics/eventContext';
 import { PostHogWrapper } from '$lib/analytics/posthog';
-import { Tauri } from '$lib/backend/tauri';
+import { type Update } from '$lib/backend';
+import { ShortcutService } from '$lib/shortcuts/shortcutService';
+import { mockCreateBackend } from '$lib/testing/mockBackend';
+import { getSettingsdServiceMock } from '$lib/testing/mockSettingsdService';
 import { UPDATE_INTERVAL_MS, UpdaterService } from '$lib/updater/updater';
 import { get } from 'svelte/store';
 import { expect, test, describe, vi, beforeEach, afterEach } from 'vitest';
-import type { Update } from '@tauri-apps/plugin-updater';
 
 /**
  * It is important to understand the sync `get` method performs a store subscription
  * under the hood.
  */
 describe('Updater', () => {
-	let tauri: Tauri;
 	let updater: UpdaterService;
-	const posthog = new PostHogWrapper();
+	const backend = mockCreateBackend();
+	const MockSettingsService = getSettingsdServiceMock();
+	const shortcuts = new ShortcutService(backend);
+	const settingsService = new MockSettingsService();
+	const eventContext = new EventContext();
+	const posthog = new PostHogWrapper(settingsService, backend, eventContext);
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		tauri = new Tauri();
-		updater = new UpdaterService(tauri, posthog);
-		vi.spyOn(tauri, 'listen').mockReturnValue(async () => {});
+		updater = new UpdaterService(backend, posthog, shortcuts);
+		vi.spyOn(backend, 'listen').mockReturnValue(async () => {});
 	});
 
 	afterEach(() => {
@@ -27,22 +33,13 @@ describe('Updater', () => {
 	});
 
 	test('should not show up-to-date on interval check', async () => {
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
-			mockUpdate({
-				available: false
-			})
-		);
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(mockUpdate(null));
 		await updater.checkForUpdate();
 		expect(get(updater.update)).toMatchObject({});
 	});
 
 	test('should show up-to-date on manual check', async () => {
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
-			mockUpdate({
-				available: false,
-				version: '1'
-			})
-		);
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(mockUpdate(null));
 		await updater.checkForUpdate(true); // manual = true;
 		expect(get(updater.update)).toHaveProperty('status', 'Up-to-date');
 	});
@@ -50,9 +47,8 @@ describe('Updater', () => {
 	test('should prompt again on new version', async () => {
 		const body = 'release notes';
 
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(
 			mockUpdate({
-				available: true,
 				version: '1',
 				body
 			})
@@ -64,9 +60,8 @@ describe('Updater', () => {
 		expect(update1).toHaveProperty('releaseNotes', body);
 		updater.dismiss();
 
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(
 			mockUpdate({
-				available: true,
 				version: '2',
 				body
 			})
@@ -81,9 +76,8 @@ describe('Updater', () => {
 		const version = '1';
 		const body = 'release notes';
 
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(
 			mockUpdate({
-				available: true,
 				version,
 				body
 			})
@@ -101,11 +95,7 @@ describe('Updater', () => {
 	});
 
 	test('should check for updates continously', async () => {
-		const mock = vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
-			mockUpdate({
-				available: false
-			})
-		);
+		const mock = vi.spyOn(backend, 'checkUpdate').mockReturnValue(mockUpdate(null));
 
 		const unsubscribe = updater.update.subscribe(() => {});
 		expect(mock).toHaveBeenCalledOnce();
@@ -116,9 +106,31 @@ describe('Updater', () => {
 		}
 		unsubscribe();
 	});
+
+	test('should respect disableAutoChecks setting', async () => {
+		const mock = vi.spyOn(backend, 'checkUpdate').mockReturnValue(mockUpdate(null));
+
+		// Set disableAutoChecks to true
+		updater.disableAutoChecks.set(true);
+
+		// Try to check for updates (should be skipped when disabled)
+		await updater.checkForUpdate();
+		expect(mock).not.toHaveBeenCalled();
+
+		// Set disableAutoChecks to false
+		updater.disableAutoChecks.set(false);
+
+		// Try to check for updates (should work when enabled)
+		await updater.checkForUpdate();
+		expect(mock).toHaveBeenCalledOnce();
+	});
 });
 
-async function mockUpdate(update: Partial<Update>): Promise<Update> {
+async function mockUpdate(update: Partial<Update> | null): Promise<Update | null> {
+	if (update === null) {
+		return await Promise.resolve(null);
+	}
+
 	return await Promise.resolve({
 		download: () => {},
 		install: () => {},

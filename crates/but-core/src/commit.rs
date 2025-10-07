@@ -1,11 +1,16 @@
 use crate::Commit;
-use anyhow::Context;
+use anyhow::{Context, bail};
 use bstr::{BString, ByteSlice};
 use gix::prelude::ObjectIdExt;
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use std::{collections::HashSet, path::PathBuf};
+
+/// A unique ID to track any commit.
+pub type ChangeId = crate::Id<'C'>;
 
 /// A collection of all the extra information we keep in the headers of a commit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct HeadersV2 {
     /// A property we can use to determine if two different commits are
     /// actually the same "patch" at different points in time. We carry it
@@ -13,7 +18,7 @@ pub struct HeadersV2 {
     /// Note that these don't have to be unique within a branch even,
     /// and it's possible that different commits with the same change-id
     /// have different content.
-    pub change_id: String,
+    pub change_id: ChangeId,
     /// A property used to indicate that we've written a conflicted tree to a
     /// commit, and `Some(num_files)` is the amount of conflicted files.
     ///
@@ -29,8 +34,14 @@ impl HeadersV2 {
             let version = header.to_owned();
 
             if version == HEADERS_VERSION {
-                let change_id = commit.extra_headers().find(HEADERS_CHANGE_ID_FIELD)?;
-                let change_id = change_id.to_str().ok()?.to_string();
+                let change_id = ChangeId::from_str(
+                    commit
+                        .extra_headers()
+                        .find(HEADERS_CHANGE_ID_FIELD)?
+                        .to_str()
+                        .ok()?,
+                )
+                .ok()?;
 
                 let conflicted = commit
                     .extra_headers()
@@ -56,9 +67,8 @@ impl HeadersV2 {
         }
     }
 
-    /// Write the values from this instance to the given `commit`,  fully replacing any header
-    /// that might have been there before.
-    pub fn set_in_commit(&self, commit: &mut gix::objs::Commit) {
+    /// Remove all header fields from `commit`.
+    pub fn remove_in_commit(commit: &mut gix::objs::Commit) {
         for field in [
             HEADERS_VERSION_FIELD,
             HEADERS_CHANGE_ID_FIELD,
@@ -68,7 +78,12 @@ impl HeadersV2 {
                 commit.extra_headers.remove(pos);
             }
         }
+    }
 
+    /// Write the values from this instance to the given `commit`,  fully replacing any header
+    /// that might have been there before.
+    pub fn set_in_commit(&self, commit: &mut gix::objs::Commit) {
+        Self::remove_in_commit(commit);
         commit
             .extra_headers
             .extend(Vec::<(BString, BString)>::from(self));
@@ -80,15 +95,15 @@ impl Default for HeadersV2 {
         HeadersV2 {
             // Change ID using base16 encoding
             change_id: if cfg!(feature = "testing") {
-                std::env::var("CHANGE_ID").unwrap_or_else(|_| {
-                    eprintln!(
-                        "With 'testing' feature the `CHANGE_ID` \
-environment variable can be set have stable values"
-                    );
-                    Uuid::new_v4().to_string()
-                })
+                // TODO: remove the CHANGE_ID dependency, but old tests still need it.
+                //       In future, the 'testing' feature alone should be enough.
+                if std::env::var("CHANGE_ID").is_ok() {
+                    ChangeId::from_number_for_testing(1)
+                } else {
+                    ChangeId::generate()
+                }
             } else {
-                Uuid::new_v4().to_string()
+                ChangeId::generate()
             },
             conflicted: None,
         }
@@ -104,7 +119,10 @@ struct HeadersV1 {
 impl From<HeadersV1> for HeadersV2 {
     fn from(commit_headers_v1: HeadersV1) -> HeadersV2 {
         HeadersV2 {
-            change_id: commit_headers_v1.change_id,
+            change_id: commit_headers_v1
+                .change_id
+                .parse()
+                .unwrap_or_else(|_| ChangeId::generate()),
             conflicted: None,
         }
     }
@@ -123,7 +141,10 @@ impl From<&HeadersV2> for Vec<(BString, BString)> {
                 BString::from(HEADERS_VERSION_FIELD),
                 BString::from(HEADERS_VERSION),
             ),
-            (HEADERS_CHANGE_ID_FIELD.into(), hdr.change_id.clone().into()),
+            (
+                HEADERS_CHANGE_ID_FIELD.into(),
+                hdr.change_id.to_string().into(),
+            ),
         ];
 
         if let Some(conflicted) = hdr.conflicted {
@@ -137,6 +158,9 @@ impl From<&HeadersV2> for Vec<(BString, BString)> {
 }
 
 /// When commits are in conflicting state, they store various trees which to help deal with the conflict.
+///
+/// This also includes variant that represents the blob which contains the
+/// conflicted information.
 #[derive(Debug, Copy, Clone)]
 pub enum TreeKind {
     /// Our tree that caused a conflict during the merge.
@@ -147,6 +171,8 @@ pub enum TreeKind {
     Base,
     /// The tree that resulted from the merge with auto-resolution enabled.
     AutoResolution,
+    /// The information about what is conflicted.
+    ConflictFiles,
 }
 
 impl TreeKind {
@@ -157,6 +183,7 @@ impl TreeKind {
             TreeKind::Theirs => ".conflict-side-1",
             TreeKind::Base => ".conflict-base-0",
             TreeKind::AutoResolution => ".auto-resolution",
+            TreeKind::ConflictFiles => ".conflict-files",
         }
     }
 }
@@ -208,43 +235,97 @@ impl<'repo> Commit<'repo> {
         self.headers().is_some_and(|hdr| hdr.is_conflicted())
     }
 
-    /// Return the hash of *our* tree, even if this commit is conflicted.
-    pub fn tree_id(&self) -> anyhow::Result<gix::Id<'repo>> {
-        Ok(self
-            .tree_id_by_kind(TreeKind::Ours)?
-            .expect("our tree is always available"))
+    /// If the commit is conflicted, then it returns the auto-resolution tree,
+    /// otherwise it returns the commit's tree.
+    ///
+    /// Most of the time this is what you want to use when diffing or
+    /// displaying the commit to the user.
+    pub fn tree_id_or_auto_resolution(&self) -> anyhow::Result<gix::Id<'repo>> {
+        self.tree_id_or_kind(TreeKind::AutoResolution)
     }
 
-    /// Return the tree of the given `kind`, or `None` if no such tree exists as this instance is *not* conflicted.
-    /// If `kind` is [`TreeKind::Ours`] one can always expect `Some()` tree.
-    pub fn tree_id_by_kind(&self, kind: TreeKind) -> anyhow::Result<Option<gix::Id<'repo>>> {
+    /// If the commit is conflicted, then return the particular conflict-tree
+    /// specified by `kind`, otherwise return the commit's tree.
+    ///
+    /// Most of the time, you will probably want to use [`Self::tree_id_or_auto_resolution()`]
+    /// instead.
+    pub fn tree_id_or_kind(&self, kind: TreeKind) -> anyhow::Result<gix::Id<'repo>> {
         Ok(if self.is_conflicted() {
-            let our_tree = self
-                .inner
+            self.inner
                 .tree
                 .attach(self.id.repo)
                 .object()?
                 .into_tree()
                 .find_entry(kind.as_tree_entry_name())
                 .with_context(|| format!("Unexpected tree in conflicting commit {}", self.id))?
-                .id();
-            Some(our_tree)
-        } else if matches!(kind, TreeKind::Ours) {
-            Some(self.inner.tree.attach(self.id.repo))
+                .id()
         } else {
-            None
+            self.inner.tree.attach(self.id.repo)
         })
-    }
-
-    /// Just like [`Self::tree_id_by_kind()`], but automatically return our tree if this instance isn't conflicted.
-    pub fn tree_id_by_kind_or_ours(&self, kind: TreeKind) -> anyhow::Result<gix::Id<'repo>> {
-        Ok(self
-            .tree_id_by_kind(kind)?
-            .unwrap_or_else(|| self.inner.tree.attach(self.id.repo)))
     }
 
     /// Return our custom headers, of present.
     pub fn headers(&self) -> Option<HeadersV2> {
         HeadersV2::try_from_commit(&self.inner)
+    }
+}
+
+/// Conflict specific details
+impl Commit<'_> {
+    /// Obtains the conflict entries of a conflicted commit if the commit is
+    /// conflicted, otherwise returns None.
+    pub fn conflict_entries(&self) -> anyhow::Result<Option<ConflictEntries>> {
+        let repo = self.id.repo;
+
+        if !self.is_conflicted() {
+            return Ok(None);
+        }
+
+        let tree = repo.find_tree(self.tree)?;
+        let Some(conflicted_entries_blob) =
+            tree.find_entry(TreeKind::ConflictFiles.as_tree_entry_name())
+        else {
+            bail!(
+                "There has been a malformed conflicted commit, unable to find the conflicted files"
+            );
+        };
+        let conflicted_entries_blob = conflicted_entries_blob.object()?.into_blob();
+        let conflicted_entries: ConflictEntries =
+            toml::from_str(&conflicted_entries_blob.data.as_bstr().to_str_lossy())?;
+
+        Ok(Some(conflicted_entries))
+    }
+}
+
+/// Represents what was causing a particular commit to conflict when rebased.
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictEntries {
+    /// The ancestors that were conflicted
+    pub ancestor_entries: Vec<PathBuf>,
+    /// The ours side entries that were conflicted
+    pub our_entries: Vec<PathBuf>,
+    /// The theirs side entries that were conflicted
+    pub their_entries: Vec<PathBuf>,
+}
+
+impl ConflictEntries {
+    /// If there are any conflict entries
+    pub fn has_entries(&self) -> bool {
+        !self.ancestor_entries.is_empty()
+            || !self.our_entries.is_empty()
+            || !self.their_entries.is_empty()
+    }
+
+    /// The total count of conflicted entries
+    pub fn total_entries(&self) -> usize {
+        let set = self
+            .ancestor_entries
+            .iter()
+            .chain(self.our_entries.iter())
+            .chain(self.their_entries.iter())
+            .collect::<HashSet<_>>();
+
+        set.len()
     }
 }

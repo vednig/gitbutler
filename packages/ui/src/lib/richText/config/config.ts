@@ -1,4 +1,5 @@
 import { EmojiNode } from '$lib/richText/node/emoji';
+import { GhostText } from '$lib/richText/node/ghostText';
 import { MentionNode } from '$lib/richText/node/mention';
 import {
 	HeadingNode,
@@ -55,6 +56,7 @@ export function standardConfig(args: {
 }): InitialConfigType {
 	const { namespace, theme, onError, initialText } = args;
 	return {
+		editable: true,
 		theme,
 		namespace,
 		onError,
@@ -89,7 +91,8 @@ export function standardConfig(args: {
 			CodeHighlightNode,
 			EmojiNode,
 			KeywordNode,
-			MentionNode
+			MentionNode,
+			GhostText
 		]
 	};
 }

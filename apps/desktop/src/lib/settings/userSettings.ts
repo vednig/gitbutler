@@ -1,7 +1,8 @@
+import { InjectionToken } from '@gitbutler/core/context';
 import { get, writable, type Writable } from 'svelte/store';
 
 const SETTINGS_KEY = 'settings-json';
-export const SETTINGS = Symbol('Settings');
+export const SETTINGS = new InjectionToken<Writable<Settings>>('Settings');
 
 export type ScrollbarVisilitySettings = 'scroll' | 'hover' | 'always';
 export type CodeEditorSettings = {
@@ -28,6 +29,7 @@ export interface Settings {
 	diffLigatures: boolean;
 	inlineUnifiedDiffs: boolean;
 	diffContrast: 'light' | 'medium' | 'strong';
+	colorBlindFriendly: boolean;
 	defaultCodeEditor: CodeEditorSettings;
 }
 
@@ -49,6 +51,7 @@ const defaults: Settings = {
 	diffLigatures: false,
 	inlineUnifiedDiffs: false,
 	diffContrast: 'light',
+	colorBlindFriendly: false,
 	defaultCodeEditor: { schemeIdentifer: 'vscode', displayName: 'VSCode' }
 };
 

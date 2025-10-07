@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { eventTimeStamp } from '@gitbutler/shared/branches/utils';
-	import Icon from '@gitbutler/ui/Icon.svelte';
+
+	import { Icon } from '@gitbutler/ui';
 	import type { IssueUpdateEvent } from '@gitbutler/shared/patchEvents/types';
 
 	const UNKNOWN_AUTHOR = 'Unknown author';
@@ -45,9 +46,9 @@
 		flex-direction: column;
 		padding: 14px 16px;
 		gap: 12px;
+		border-bottom: 1px solid var(--clr-border-3);
 
 		border-left: 4px solid var(--clr-theme-succ-element);
-		border-bottom: 1px solid var(--clr-border-3);
 	}
 
 	.issue-update__header {
@@ -69,8 +70,8 @@
 
 	.issue-update__status-icon {
 		display: flex;
-		width: 16px;
 		align-items: center;
+		width: 16px;
 
 		border-radius: var(--radius-m);
 		background: var(--clr-theme-succ-element);

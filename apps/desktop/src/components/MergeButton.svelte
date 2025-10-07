@@ -1,15 +1,13 @@
 <script lang="ts">
 	import { MergeMethod } from '$lib/forge/interface/types';
 	import { persisted, type Persisted } from '@gitbutler/shared/persisted';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import DropDownButton from '@gitbutler/ui/DropDownButton.svelte';
-	import type { Props as ButtonProps } from '@gitbutler/ui/Button.svelte';
+
+	import { ContextMenuItem, ContextMenuSection, DropdownButton } from '@gitbutler/ui';
+	import type { ButtonProps } from '@gitbutler/ui';
 
 	interface Props {
 		projectId: string;
-		onclick: (method: MergeMethod) => void;
-		loading?: boolean;
+		onclick: (method: MergeMethod) => Promise<void>;
 		disabled?: boolean;
 		wide?: boolean;
 		tooltip?: string;
@@ -20,7 +18,6 @@
 	const {
 		projectId,
 		onclick,
-		loading = false,
 		disabled = false,
 		wide = false,
 		tooltip = '',
@@ -35,7 +32,8 @@
 
 	const action = persistedAction(projectId);
 
-	let dropDown: ReturnType<typeof DropDownButton> | undefined;
+	let dropDown: ReturnType<typeof DropdownButton> | undefined;
+	let loading = $state(false);
 
 	const labels = {
 		[MergeMethod.Merge]: 'Merge pull request',
@@ -44,9 +42,16 @@
 	};
 </script>
 
-<DropDownButton
+<DropdownButton
 	bind:this={dropDown}
-	onclick={() => onclick?.($action)}
+	onclick={async () => {
+		loading = true;
+		try {
+			await onclick?.($action);
+		} finally {
+			loading = false;
+		}
+	}}
 	{style}
 	{kind}
 	{loading}
@@ -68,4 +73,4 @@
 			{/each}
 		</ContextMenuSection>
 	{/snippet}
-</DropDownButton>
+</DropdownButton>

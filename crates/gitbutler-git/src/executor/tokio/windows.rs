@@ -1,9 +1,4 @@
-use std::{
-    cell::RefCell,
-    os::windows::{fs::MetadataExt, io::AsRawHandle},
-    path::Path,
-    time::Duration,
-};
+use std::{cell::RefCell, os::windows::io::AsRawHandle, path::Path, time::Duration};
 
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
@@ -25,7 +20,7 @@ impl Socket for BufStream<NamedPipeServer> {
         let handle: HANDLE = HANDLE(raw_handle);
         let mut out_pid: u32 = 0;
 
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         let r = unsafe { GetNamedPipeClientProcessId(handle, &mut out_pid) };
 
         match r {
@@ -77,7 +72,7 @@ impl AskpassServer for TokioAskpassServer {
     type SocketHandle = BufStream<NamedPipeServer>;
 
     // We can ignore clippy here since we locked the mutex.
-    #[allow(clippy::await_holding_refcell_ref)]
+    #[expect(clippy::await_holding_refcell_ref)]
     async fn accept(&self, timeout: Option<Duration>) -> Result<Self::SocketHandle, Self::Error> {
         let server = self.server.lock().await;
 
@@ -111,7 +106,11 @@ impl Drop for TokioAskpassServer {
 }
 
 pub async fn stat<P: AsRef<Path>>(path: P) -> Result<FileStat, std::io::Error> {
-    let metadata = tokio::fs::symlink_metadata(path).await?;
+    use file_id::FileId;
+    let path = path.as_ref().to_owned();
+    let metadata = tokio::fs::symlink_metadata(&path).await?;
+    let file_id =
+        tokio::task::spawn_blocking(move || file_id::get_low_res_file_id_no_follow(path)).await??;
 
     // NOTE(qix-): We can safely unwrap here since the docs say:
     // NOTE(qix-):
@@ -121,9 +120,23 @@ pub async fn stat<P: AsRef<Path>>(path: P) -> Result<FileStat, std::io::Error> {
     // NOTE(qix-):
     // NOTE(qix-): Thus, since we're not using directory entries, these are guaranteed to
     // NOTE(qix-): return `Some`.
+    let (ino, dev) = match file_id {
+        FileId::Inode {
+            device_id,
+            inode_number,
+        } => (inode_number, device_id),
+        FileId::LowRes {
+            file_index,
+            volume_serial_number,
+        } => (file_index, volume_serial_number as u64),
+        FileId::HighRes {
+            file_id,
+            volume_serial_number,
+        } => (file_id as u64, volume_serial_number),
+    };
     Ok(FileStat {
-        dev: metadata.volume_serial_number().unwrap().into(),
-        ino: metadata.file_index().unwrap(),
+        dev,
+        ino,
         is_regular_file: metadata.is_file(),
     })
 }

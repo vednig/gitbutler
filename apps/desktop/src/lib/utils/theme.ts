@@ -1,20 +1,13 @@
-import { getCurrentWindow, type Theme } from '@tauri-apps/api/window';
-import { writable, type Writable } from 'svelte/store';
+import { type Writable } from 'svelte/store';
+import type { IBackend } from '$lib/backend';
 import type { Settings } from '$lib/settings/userSettings';
-const appWindow = getCurrentWindow();
-
-export const theme = writable('dark');
 
 let systemTheme: string | null;
 let selectedTheme: string | undefined;
 
-export function initTheme(userSettings: Writable<Settings>) {
-	appWindow.theme().then((value: Theme | null) => {
-		systemTheme = value;
-		updateDom();
-	});
-	appWindow.onThemeChanged((e) => {
-		systemTheme = e.payload;
+export function initTheme(userSettings: Writable<Settings>, backend: IBackend) {
+	backend.systemTheme.subscribe((theme) => {
+		systemTheme = theme;
 		updateDom();
 	});
 	userSettings.subscribe((s) => {
@@ -23,7 +16,7 @@ export function initTheme(userSettings: Writable<Settings>) {
 	});
 }
 
-export function updateDom() {
+function updateDom() {
 	const docEl = document.documentElement;
 	if (
 		selectedTheme === 'dark' ||

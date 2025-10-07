@@ -1,131 +1,312 @@
-<script lang="ts">
-	import { BaseBranch } from '$lib/baseBranch/baseBranch';
-	import { BranchStack } from '$lib/branches/branch';
-	import { BranchController } from '$lib/branches/branchController';
-	import { type Commit, type DetailedCommit } from '$lib/commits/commit';
-	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { getContext } from '@gitbutler/shared/context';
-	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-
-	interface Props {
-		menu: ReturnType<typeof ContextMenu> | undefined;
-		leftClickTrigger: HTMLElement | undefined;
-		rightClickTrigger: HTMLElement | undefined;
-		baseBranch: BaseBranch;
-		stack: BranchStack | undefined;
-		commit: DetailedCommit | Commit;
-		commitUrl: string | undefined;
-		isRemote: boolean;
-		onUncommitClick: (event: MouseEvent) => void;
-		onEditMessageClick: (event: MouseEvent) => void;
-		onPatchEditClick: (event: MouseEvent) => void;
-		onClose?: () => void;
-		onToggle?: (isOpen: boolean, isLeftClick: boolean) => void;
+<script lang="ts" module>
+	import type { CommitStatusType } from '$lib/commits/commit';
+	interface BaseContextData {
+		commitStatus: CommitStatusType;
+		commitId: string;
+		commitMessage: string;
+		commitUrl?: string;
 	}
 
-	let {
-		menu = $bindable(),
-		leftClickTrigger,
-		rightClickTrigger,
-		baseBranch,
-		stack: branch,
-		commit,
-		commitUrl,
-		isRemote,
-		onUncommitClick,
-		onEditMessageClick,
-		onPatchEditClick,
-		onClose,
-		onToggle
-	}: Props = $props();
+	interface LocalCommitContextData extends BaseContextData {
+		commitStatus: 'LocalOnly' | 'LocalAndRemote';
+		stackId?: string;
+		onUncommitClick: (event: MouseEvent) => void;
+		onEditMessageClick: (event: MouseEvent) => void;
+	}
 
-	const branchController = getContext(BranchController);
+	interface RemoteCommitContextData extends BaseContextData {
+		commitStatus: 'Remote';
+		stackId?: string;
+	}
 
-	function insertBlankCommit(commitId: string, location: 'above' | 'below' = 'below') {
-		if (!branch || !baseBranch) {
-			console.error('Unable to insert commit');
-			return;
-		}
-		branchController.insertBlankCommit(branch.id, commitId, location === 'above' ? -1 : 1);
+	interface IntegratedCommitContextData extends BaseContextData {
+		commitStatus: 'Integrated';
+		stackId?: string;
+	}
+
+	interface BaseCommitContextData extends BaseContextData {
+		commitStatus: 'Base';
+	}
+
+	export type CommitContextData =
+		| LocalCommitContextData
+		| RemoteCommitContextData
+		| IntegratedCommitContextData
+		| BaseCommitContextData;
+
+	export type CommitMenuContext = {
+		position: { coords?: { x: number; y: number }; element?: HTMLElement };
+		data: CommitContextData;
+	};
+</script>
+
+<script lang="ts">
+	import { CLIPBOARD_SERVICE } from '$lib/backend/clipboard';
+	import { rewrapCommitMessage } from '$lib/config/uiFeatureFlags';
+	import { editPatch } from '$lib/editMode/editPatchUtils';
+	import { MODE_SERVICE } from '$lib/mode/modeService';
+	import { STACK_SERVICE } from '$lib/stacks/stackService.svelte';
+	import { URL_SERVICE } from '$lib/utils/url';
+	import { ensureValue } from '$lib/utils/validation';
+	import { inject, injectOptional } from '@gitbutler/core/context';
+	import {
+		ContextMenu,
+		ContextMenuItem,
+		ContextMenuItemSubmenu,
+		ContextMenuSection,
+		KebabButton,
+		TestId
+	} from '@gitbutler/ui';
+	import type { AnchorPosition } from '$lib/stacks/stack';
+
+	type Props = {
+		flat?: boolean;
+		projectId: string;
+		openId?: string;
+		rightClickTrigger?: HTMLElement;
+		contextData: CommitContextData | undefined;
+	};
+
+	let { flat, projectId, openId = $bindable(), rightClickTrigger, contextData }: Props = $props();
+
+	const urlService = inject(URL_SERVICE);
+	const stackService = inject(STACK_SERVICE);
+	const clipboardService = inject(CLIPBOARD_SERVICE);
+	const modeService = injectOptional(MODE_SERVICE, undefined);
+	const [insertBlankCommitInBranch, commitInsertion] = stackService.insertBlankCommit;
+	const [createRef, refCreation] = stackService.createReference;
+
+	// Component is read-only when stackId is undefined
+	const isReadOnly = $derived(
+		contextData?.commitStatus === 'LocalAndRemote' || contextData?.commitStatus === 'LocalOnly'
+			? !contextData.stackId
+			: false
+	);
+
+	let contextMenu = $state<ReturnType<typeof ContextMenu>>();
+	let kebabButtonElement = $state<HTMLElement>();
+
+	async function insertBlankCommit(
+		stackId: string,
+		commitId: string,
+		location: 'above' | 'below' = 'below'
+	) {
+		await insertBlankCommitInBranch({
+			projectId,
+			stackId,
+			commitId: commitId,
+			offset: location === 'above' ? -1 : 1
+		});
+	}
+
+	async function handleCreateNewRef(stackId: string, commitId: string, position: AnchorPosition) {
+		const newName = await stackService.fetchNewBranchName(projectId);
+		await createRef({
+			projectId,
+			stackId,
+			request: {
+				newName,
+				anchor: {
+					type: 'atCommit',
+					subject: {
+						commit_id: commitId,
+						position
+					}
+				}
+			}
+		});
+	}
+
+	async function handleEditPatch(commitId: string, stackId: string) {
+		if (isReadOnly) return;
+		await editPatch({
+			modeService,
+			commitId,
+			stackId,
+			projectId
+		});
+	}
+
+	function closeContextMenu() {
+		contextMenu?.close();
 	}
 </script>
 
-<ContextMenu
-	bind:this={menu}
-	{leftClickTrigger}
-	{rightClickTrigger}
-	onclose={onClose}
-	ontoggle={onToggle}
->
-	{#if !isRemote}
-		<ContextMenuSection>
-			<ContextMenuItem
-				label="Uncommit"
-				onclick={(e: MouseEvent) => {
-					onUncommitClick(e);
-					menu?.close();
-				}}
-			/>
-			<ContextMenuItem
-				label="Edit commit message"
-				onclick={(e: MouseEvent) => {
-					onEditMessageClick(e);
-					menu?.close();
-				}}
-			/>
-			<ContextMenuItem
-				label="Edit commit"
-				onclick={(e: MouseEvent) => {
-					onPatchEditClick(e);
-					menu?.close();
-				}}
-			/>
-		</ContextMenuSection>
-	{/if}
-	<ContextMenuSection>
-		{#if commitUrl}
-			<ContextMenuItem
-				label="Open in browser"
-				onclick={async () => {
-					await openExternalUrl(commitUrl);
-					menu?.close();
-				}}
-			/>
-			<ContextMenuItem
-				label="Copy commit link"
-				onclick={() => {
-					copyToClipboard(commitUrl);
-					menu?.close();
-				}}
-			/>
+{#if rightClickTrigger && contextData}
+	<KebabButton
+		{flat}
+		bind:el={kebabButtonElement}
+		contextElement={rightClickTrigger}
+		testId={TestId.KebabMenuButton}
+		onclick={() => {
+			contextMenu?.toggle();
+		}}
+		oncontext={(e) => {
+			contextMenu?.open(e);
+		}}
+	/>
+
+	<ContextMenu
+		bind:this={contextMenu}
+		leftClickTrigger={kebabButtonElement}
+		{rightClickTrigger}
+		testId={TestId.CommitRowContextMenu}
+	>
+		{#if contextData}
+			{@const { commitId, commitUrl, commitMessage } = contextData}
+			{#if contextData.commitStatus === 'LocalAndRemote' || contextData.commitStatus === 'LocalOnly'}
+				{@const { onUncommitClick, onEditMessageClick } = contextData}
+				<ContextMenuSection>
+					<ContextMenuItem
+						label="Uncommit"
+						icon="undo-small"
+						testId={TestId.CommitRowContextMenu_UncommitMenuButton}
+						disabled={isReadOnly}
+						onclick={(e: MouseEvent) => {
+							if (!isReadOnly) {
+								onUncommitClick?.(e);
+								closeContextMenu();
+							}
+						}}
+					/>
+					<ContextMenuItem
+						label="Edit commit message"
+						icon="edit"
+						testId={TestId.CommitRowContextMenu_EditMessageMenuButton}
+						disabled={isReadOnly}
+						onclick={(e: MouseEvent) => {
+							if (!isReadOnly) {
+								onEditMessageClick?.(e);
+								closeContextMenu();
+							}
+						}}
+					/>
+					<ContextMenuItem
+						label="Edit commit"
+						icon="edit-commit"
+						testId={TestId.CommitRowContextMenu_EditCommit}
+						disabled={isReadOnly}
+						onclick={async () => {
+							if (!isReadOnly && contextData.stackId) {
+								await handleEditPatch(commitId, contextData.stackId);
+								closeContextMenu();
+							}
+						}}
+					/>
+				</ContextMenuSection>
+			{/if}
+			<ContextMenuSection>
+				{#if commitUrl}
+					<ContextMenuItem
+						label="Open in browser"
+						icon="open-link"
+						onclick={async () => {
+							await urlService.openExternalUrl(commitUrl);
+							closeContextMenu();
+						}}
+					/>
+				{/if}
+				<ContextMenuItemSubmenu label="Copy" icon="copy">
+					{#snippet submenu({ close })}
+						<ContextMenuSection>
+							{#if commitUrl}
+								<ContextMenuItem
+									label="Copy commit link"
+									onclick={() => {
+										clipboardService.write(commitUrl, { message: 'Commit link copied' });
+										close();
+										closeContextMenu();
+									}}
+								/>
+							{/if}
+							<ContextMenuItem
+								label="Copy commit hash"
+								onclick={() => {
+									clipboardService.write(commitId, { message: 'Commit hash copied' });
+									close();
+									closeContextMenu();
+								}}
+							/>
+							<ContextMenuItem
+								label="Copy commit message"
+								onclick={() => {
+									clipboardService.write(commitMessage, { message: 'Commit message copied' });
+									close();
+									closeContextMenu();
+								}}
+							/>
+						</ContextMenuSection>
+					{/snippet}
+				</ContextMenuItemSubmenu>
+				{#if contextData.commitStatus === 'LocalAndRemote' || contextData.commitStatus === 'LocalOnly'}
+					{@const stackId = contextData.stackId}
+
+					<ContextMenuItemSubmenu label="Add empty commit" icon="new-empty-commit">
+						{#snippet submenu({ close })}
+							<ContextMenuSection>
+								<ContextMenuItem
+									label="Add empty commit above"
+									disabled={isReadOnly || commitInsertion.current.isLoading}
+									onclick={() => {
+										insertBlankCommit(ensureValue(stackId), commitId, 'above');
+										close();
+										closeContextMenu();
+									}}
+								/>
+								<ContextMenuItem
+									label="Add empty commit below"
+									disabled={isReadOnly || commitInsertion.current.isLoading}
+									onclick={() => {
+										insertBlankCommit(ensureValue(stackId), commitId, 'below');
+										close();
+										closeContextMenu();
+									}}
+								/>
+							</ContextMenuSection>
+						{/snippet}
+					</ContextMenuItemSubmenu>
+					<ContextMenuItemSubmenu label="Create branch" icon="branch-remote">
+						{#snippet submenu({ close })}
+							<ContextMenuSection>
+								<ContextMenuItem
+									label="Branch from this commit"
+									disabled={isReadOnly || refCreation.current.isLoading}
+									onclick={async () => {
+										if (!isReadOnly) {
+											await handleCreateNewRef(ensureValue(stackId), commitId, 'Above');
+											close();
+											closeContextMenu();
+										}
+									}}
+								/>
+								<ContextMenuItem
+									label="Branch after this commit"
+									disabled={isReadOnly || refCreation.current.isLoading}
+									onclick={async () => {
+										if (!isReadOnly) {
+											await handleCreateNewRef(ensureValue(stackId), commitId, 'Below');
+											close();
+											closeContextMenu();
+										}
+									}}
+								/>
+							</ContextMenuSection>
+						{/snippet}
+					</ContextMenuItemSubmenu>
+				{/if}
+			</ContextMenuSection>
+
+			<ContextMenuSection>
+				<ContextMenuItem
+					label={$rewrapCommitMessage ? 'Show original wrapping' : 'Rewrap message'}
+					icon="text-wrap"
+					disabled={commitInsertion.current.isLoading}
+					onclick={() => {
+						rewrapCommitMessage.set(!$rewrapCommitMessage);
+						closeContextMenu();
+					}}
+				/>
+			</ContextMenuSection>
 		{/if}
-		<ContextMenuItem
-			label="Copy commit message"
-			onclick={() => {
-				copyToClipboard(commit.description);
-				menu?.close();
-			}}
-		/>
-	</ContextMenuSection>
-	{#if 'branchId' in commit && !isRemote}
-		<ContextMenuSection>
-			<ContextMenuItem
-				label="Add empty commit above"
-				onclick={() => {
-					insertBlankCommit(commit.id, 'above');
-					menu?.close();
-				}}
-			/>
-			<ContextMenuItem
-				label="Add empty commit below"
-				onclick={() => {
-					insertBlankCommit(commit.id, 'below');
-					menu?.close();
-				}}
-			/>
-		</ContextMenuSection>
-	{/if}
-</ContextMenu>
+	</ContextMenu>
+{/if}

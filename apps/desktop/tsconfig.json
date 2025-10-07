@@ -14,17 +14,11 @@
 		"sourceMap": true,
 		"strict": true,
 		"experimentalDecorators": true,
-		"types": [
-			"@wdio/globals/types",
-			"@wdio/mocha-framework",
-			"vitest/importMeta",
-			"@vitest/browser/matchers",
-			"vitest/jsdom"
-		]
+		"noFallthroughCasesInSwitch": true,
+		"types": ["vitest/importMeta", "vitest/jsdom"]
 	},
 	"include": [
 		"vitest-setup.js",
-		"wdio.conf.ts",
 		".svelte-kit/ambient.d.ts",
 		".svelte-kit/non-ambient.d.ts",
 		".svelte-kit/types/**/$types.d.ts",
@@ -34,8 +28,8 @@
 		"src/**/*.js",
 		"src/**/*.ts",
 		"src/**/*.svelte",
-		"e2e/tests/**/*.js",
-		"e2e/tests/**/*.ts",
-		"e2e/tests/**/*.svelte"
+		"cypress.config.ts",
+		"cypress/**/*.ts",
+		"src/**/electron.d.ts"
 	]
 }

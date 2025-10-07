@@ -37,18 +37,23 @@ impl RepositoryExt for gix::Repository {
     ) -> anyhow::Result<gix::merge::tree::Outcome<'_>> {
         // TODO: more tests for the handling of conlicting commits in particular
         let to_rebase_commit = crate::Commit::from_id(to_rebase_commit_id.attach(self))?;
-        let base = match to_rebase_commit.tree_id_by_kind(TreeKind::Base)? {
-            None => match to_rebase_commit.inner.parents.first() {
+        // If the commit we are picking is conflicted then we want to use the
+        // original base that was used when it was first cherry-picked.
+        //
+        // If it is not conflicted, then we use the first parent as the base.
+        let base = if to_rebase_commit.is_conflicted() {
+            match to_rebase_commit.inner.parents.first() {
                 None => gix::ObjectId::empty_tree(self.object_hash()),
                 Some(parent_commit) => crate::Commit::from_id(parent_commit.attach(self))?
-                    .tree_id_by_kind_or_ours(TreeKind::AutoResolution)?
+                    .tree_id_or_auto_resolution()?
                     .detach(),
-            },
-            Some(id) => id.detach(),
+            }
+        } else {
+            to_rebase_commit.tree_id_or_kind(TreeKind::Base)?.detach()
         };
         let ours = crate::Commit::from_id(new_base_commit_id.attach(self))?
-            .tree_id_by_kind_or_ours(TreeKind::AutoResolution)?;
-        let theirs = to_rebase_commit.tree_id_by_kind_or_ours(TreeKind::Theirs)?;
+            .tree_id_or_auto_resolution()?;
+        let theirs = to_rebase_commit.tree_id_or_kind(TreeKind::Theirs)?;
 
         self.merge_trees(
             base,   /* the tree of the parent of the commit to cherry-pick */
@@ -77,7 +82,7 @@ impl RepositoryExt for gix::Repository {
             .context("No author is configured in Git")
             .context(Code::AuthorMissing)?;
 
-        let commit_as_gitbutler = !self
+        let commit_as_gitbutler = self
             .config_snapshot()
             .boolean("gitbutler.gitbutlerCommitter")
             .unwrap_or_default();
@@ -86,7 +91,7 @@ impl RepositoryExt for gix::Repository {
         } else {
             repo.committer()
                 .transpose()?
-                .map(|s| s.to_owned())
+                .and_then(|s| s.to_owned().ok())
                 .unwrap_or_else(committer_signature)
         };
 
@@ -111,12 +116,11 @@ const GITBUTLER_COMMIT_AUTHOR_EMAIL: &str = "gitbutler@gitbutler.com";
 /// Provide a signature with the GitButler author, and the current time or the time overridden
 /// depending on the value for `purpose`.
 fn committer_signature() -> gix::actor::Signature {
-    let signature = gix::actor::SignatureRef {
+    gix::actor::Signature {
         name: GITBUTLER_COMMIT_AUTHOR_NAME.into(),
         email: GITBUTLER_COMMIT_AUTHOR_EMAIL.into(),
         time: commit_time("GIT_COMMITTER_DATE"),
-    };
-    signature.into()
+    }
 }
 
 /// Return the time of a commit as `now` unless the `overriding_variable_name` contains a parseable date,

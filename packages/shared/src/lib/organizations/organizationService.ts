@@ -14,6 +14,7 @@ import {
 	type Organization
 } from '$lib/organizations/types';
 import { POLLING_REGULAR, POLLING_SLOW } from '$lib/polling';
+import { InjectionToken } from '@gitbutler/core/context';
 import { writable, type Writable } from 'svelte/store';
 import type { ApiBranch, Branch } from '$lib/branches/types';
 import type { Loadable } from '$lib/network/types';
@@ -21,6 +22,10 @@ import type { AppDispatch } from '$lib/redux/store.svelte';
 
 // Define the LoadablePatchStacks type
 export type LoadablePatchStacks = Loadable<Branch[]> & { ownerSlug: string };
+
+export const ORGANIZATION_SERVICE: InjectionToken<OrganizationService> = new InjectionToken(
+	'OrganizationService'
+);
 
 export class OrganizationService {
 	private readonly organizationListingInterests = new InterestStore<undefined>(POLLING_SLOW);
@@ -73,7 +78,7 @@ export class OrganizationService {
 						})
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(organizationTable.upsertOne(errorToLoadable(error, slug)));
+					this.appDispatch.dispatch(organizationTable.addOne(errorToLoadable(error, slug)));
 				}
 			})
 			.createInterest();

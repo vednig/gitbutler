@@ -1,11 +1,13 @@
-pub(crate) mod commit;
+pub(crate) mod tree_changes;
 
 use bstr::{BStr, ByteSlice};
-pub use commit::commit_changes;
+pub use tree_changes::tree_changes;
 
 mod worktree;
-use crate::{ChangeState, ModeFlags, TreeChange, TreeStatus, TreeStatusKind};
-pub use worktree::worktree_changes;
+use crate::{
+    ChangeState, IgnoredWorktreeChange, ModeFlags, TreeChange, TreeStatus, TreeStatusKind,
+};
+pub use worktree::{worktree_changes, worktree_changes_no_renames};
 
 /// conversion functions for use in the UI
 pub mod ui;
@@ -59,6 +61,15 @@ impl TreeChange {
     }
 }
 
+impl std::fmt::Debug for IgnoredWorktreeChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IgnoredWorktreeChange")
+            .field("path", &self.path)
+            .field("status", &self.status)
+            .finish()
+    }
+}
+
 impl ModeFlags {
     fn calculate(old: &ChangeState, new: &ChangeState) -> Option<Self> {
         Self::calculate_inner(old.kind, new.kind)
@@ -77,6 +88,19 @@ impl ModeFlags {
             (a, b) if a != b => ModeFlags::TypeChange,
             _ => return None,
         })
+    }
+}
+
+impl ModeFlags {
+    /// Returns `true` if this instance indicates a type-change.
+    /// The only reason this isn't the case is if the executable bit changed.
+    pub fn is_typechange(&self) -> bool {
+        match self {
+            ModeFlags::ExecutableBitAdded | ModeFlags::ExecutableBitRemoved => false,
+            ModeFlags::TypeChangeFileToLink
+            | ModeFlags::TypeChangeLinkToFile
+            | ModeFlags::TypeChange => true,
+        }
     }
 }
 

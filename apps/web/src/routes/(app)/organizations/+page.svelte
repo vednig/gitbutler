@@ -1,21 +1,18 @@
 <script lang="ts">
-	import { getContext } from '@gitbutler/shared/context';
+	import { inject } from '@gitbutler/core/context';
 	import RegisterInterest from '@gitbutler/shared/interest/RegisterInterest.svelte';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { HttpClient } from '@gitbutler/shared/network/httpClient';
+	import { HTTP_CLIENT } from '@gitbutler/shared/network/httpClient';
 	import CreateOrganizationModal from '@gitbutler/shared/organizations/CreateOrganizationModal.svelte';
 	import JoinOrganizationModal from '@gitbutler/shared/organizations/JoinOrganizationModal.svelte';
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
+	import { ORGANIZATION_SERVICE } from '@gitbutler/shared/organizations/organizationService';
 	import { organizationTable } from '@gitbutler/shared/organizations/organizationsSlice';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import EmptyStatePlaceholder from '@gitbutler/ui/EmptyStatePlaceholder.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
+	import { APP_STATE } from '@gitbutler/shared/redux/store.svelte';
+	import { Button, EmptyStatePlaceholder, Icon, SectionCard } from '@gitbutler/ui';
 
-	const organizationService = getContext(OrganizationService);
-	const appState = getContext(AppState);
-	const httpClient = getContext(HttpClient);
+	const organizationService = inject(ORGANIZATION_SERVICE);
+	const appState = inject(APP_STATE);
+	const httpClient = inject(HTTP_CLIENT);
 	const authenticated = httpClient.authenticationAvailable;
 
 	const organizationsInterest = organizationService.getOrganizationListingInterest();
@@ -72,37 +69,35 @@
 									roundedBottom={index === organizations.length - 1}
 									orientation="row"
 								>
-									{#snippet children()}
-										<div class="organization-card">
-											<div
-												class="organization-avatar"
-												style:background-color="var(--clr-scale-ntrl-20)"
-												style:color="var(--clr-scale-ntrl-80)"
-											>
-												<span>{(organization.name || organization.slug)[0].toUpperCase()}</span>
+									<div class="organization-card">
+										<div
+											class="organization-avatar"
+											style:background-color="var(--clr-scale-ntrl-20)"
+											style:color="var(--clr-scale-ntrl-80)"
+										>
+											<span>{(organization.name || organization.slug)[0].toUpperCase()}</span>
+										</div>
+										<div class="organization-info">
+											<div class="organization-name-row">
+												<h3 class="organization-name">
+													{organization.name || organization.slug}
+												</h3>
+												{#if organization.name}
+													<p class="organization-slug">@{organization.slug}</p>
+												{/if}
 											</div>
-											<div class="organization-info">
-												<div class="organization-name-row">
-													<h3 class="organization-name">
-														{organization.name || organization.slug}
-													</h3>
-													{#if organization.name}
-														<p class="organization-slug">@{organization.slug}</p>
-													{/if}
+											<div class="organization-stats">
+												<div class="stat">
+													<Icon name="profile" />
+													<span>{getOrganizationMembersCount(organization)} members</span>
 												</div>
-												<div class="organization-stats">
-													<div class="stat">
-														<Icon name="profile" />
-														<span>{getOrganizationMembersCount(organization)} members</span>
-													</div>
-													<div class="stat">
-														<Icon name="search" />
-														<span>{getOrganizationProjectsCount(organization)} projects</span>
-													</div>
+												<div class="stat">
+													<Icon name="search" />
+													<span>{getOrganizationProjectsCount(organization)} projects</span>
 												</div>
 											</div>
 										</div>
-									{/snippet}
+									</div>
 
 									{#snippet actions()}
 										<div class="organization-actions">
@@ -151,8 +146,8 @@
 
 <style lang="postcss">
 	.page-container {
-		max-width: 1200px;
 		min-width: 900px;
+		max-width: 1200px;
 		margin: 0 auto;
 		padding: 24px;
 	}
@@ -170,14 +165,14 @@
 	.page-title {
 		display: flex;
 		align-items: center;
-		gap: 12px;
 		margin-bottom: 8px;
+		gap: 12px;
 	}
 
 	.page-title h1 {
-		font-size: 24px;
-		font-weight: 600;
 		color: var(--clr-text-1);
+		font-weight: 600;
+		font-size: 24px;
 	}
 
 	.page-description {
@@ -197,15 +192,15 @@
 
 	.organizations-header {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		justify-content: space-between;
 		margin-bottom: 16px;
 	}
 
 	.organizations-header h2 {
-		font-size: 18px;
-		font-weight: 500;
 		color: var(--clr-text-1);
+		font-weight: 500;
+		font-size: 18px;
 	}
 
 	.organizations-list {
@@ -216,28 +211,28 @@
 
 	.organization-card {
 		display: flex;
+		flex-grow: 1;
 		align-items: center;
 		gap: 16px;
-		flex-grow: 1;
 	}
 
 	.organization-avatar {
-		width: 40px;
-		height: 40px;
-		border-radius: 8px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		width: 40px;
+		height: 40px;
+		border-radius: 8px;
+		color: var(--clr-text-inverse);
 		font-weight: 600;
 		font-size: 18px;
-		color: var(--clr-text-inverse);
 	}
 
 	.organization-info {
 		display: flex;
+		flex-grow: 1;
 		flex-direction: column;
 		gap: 4px;
-		flex-grow: 1;
 	}
 
 	.organization-name-row {
@@ -247,14 +242,14 @@
 	}
 
 	.organization-name {
-		font-size: 16px;
-		font-weight: 600;
 		color: var(--clr-text-1);
+		font-weight: 600;
+		font-size: 16px;
 	}
 
 	.organization-slug {
-		font-size: 14px;
 		color: var(--clr-text-2);
+		font-size: 14px;
 	}
 
 	.organization-stats {
@@ -266,8 +261,8 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 13px;
 		color: var(--clr-text-3);
+		font-size: 13px;
 	}
 
 	.organization-actions {
@@ -292,23 +287,23 @@
 	}
 
 	.join-card {
-		background: var(--clr-bg-1);
+		padding: 20px;
 		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
-		padding: 20px;
+		background: var(--clr-bg-1);
 		text-align: center;
 	}
 
 	.join-title {
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--clr-text-1);
 		margin-bottom: 8px;
+		color: var(--clr-text-1);
+		font-weight: 600;
+		font-size: 16px;
 	}
 
 	.join-description {
-		font-size: 14px;
-		color: var(--clr-text-2);
 		margin-bottom: 16px;
+		color: var(--clr-text-2);
+		font-size: 14px;
 	}
 </style>

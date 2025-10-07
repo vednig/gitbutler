@@ -16,6 +16,7 @@ use gix::status::tree_index::TrackRenames;
 use std::cmp::Ordering;
 use std::io::Read;
 use std::path::PathBuf;
+use tracing::instrument;
 
 /// Identify where a [`TreeChange`] is from.
 #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
@@ -30,20 +31,54 @@ enum Origin {
 ///
 /// It's equivalent to a `git status` which is "boiled down" into all the changes that one would have to add into `HEAD^{tree}`
 /// to get a commit with a tree equal to the current worktree.
+#[instrument(skip(repo), err(Debug))]
 pub fn worktree_changes(repo: &gix::Repository) -> anyhow::Result<WorktreeChanges> {
-    let rewrites = gix::diff::Rewrites::default(); /* standard Git rewrite handling for everything */
-    debug_assert!(
-        rewrites.copies.is_none(),
-        "TODO: copy tracking needs specific support wherever 'previous_path()' is called."
-    );
+    worktree_changes_inner(repo, RenameTracking::Always)
+}
+
+/// Just like [`worktree_changes()`], but don't do any rename tracking for performance.
+#[instrument(skip(repo), err(Debug))]
+pub fn worktree_changes_no_renames(repo: &gix::Repository) -> anyhow::Result<WorktreeChanges> {
+    worktree_changes_inner(repo, RenameTracking::Disabled)
+}
+
+enum RenameTracking {
+    Always,
+    Disabled,
+}
+
+fn worktree_changes_inner(
+    repo: &gix::Repository,
+    renames: RenameTracking,
+) -> anyhow::Result<WorktreeChanges> {
+    let (tree_index_rewrites, worktree_rewrites) = match renames {
+        RenameTracking::Always => {
+            let rewrites = gix::diff::Rewrites::default(); /* standard Git rewrite handling for everything */
+            debug_assert!(
+                rewrites.copies.is_none(),
+                "TODO: copy tracking needs specific support wherever 'previous_path()' is called."
+            );
+            (TrackRenames::Given(rewrites), Some(rewrites))
+        }
+        RenameTracking::Disabled => (TrackRenames::Disabled, None),
+    };
+    let has_submodule_ignore_configuration = repo.modules()?.is_some_and(|modules| {
+        modules
+            .names()
+            .any(|name| modules.ignore(name).ok().flatten().is_some())
+    });
     let status_changes = repo
         .status(gix::progress::Discard)?
-        .tree_index_track_renames(TrackRenames::Given(rewrites))
-        .index_worktree_rewrites(rewrites)
+        .tree_index_track_renames(tree_index_rewrites)
+        .index_worktree_rewrites(worktree_rewrites)
         // Learn about submodule changes, but only do the cheap checks, showing only what we could commit.
-        .index_worktree_submodules(gix::status::Submodule::Given {
-            ignore: gix::submodule::config::Ignore::Dirty,
-            check_dirty: true,
+        .index_worktree_submodules(if has_submodule_ignore_configuration {
+            gix::status::Submodule::AsConfigured { check_dirty: true }
+        } else {
+            gix::status::Submodule::Given {
+                ignore: gix::submodule::config::Ignore::Dirty,
+                check_dirty: true,
+            }
         })
         .index_worktree_options_mut(|opts| {
             if let Some(opts) = opts.dirwalk_options.as_mut() {
@@ -62,71 +97,102 @@ pub fn worktree_changes(repo: &gix::Repository) -> anyhow::Result<WorktreeChange
     let work_dir = repo.workdir().context("need non-bare repository")?;
     let mut tmp = Vec::new();
     let mut ignored_changes = Vec::new();
+    let mut index_conflicts = Vec::new();
+    let mut index_changes = Vec::new();
     for change in status_changes {
         let change = change?;
         let change = match change {
             status::Item::TreeIndex(gix::diff::index::Change::Deletion {
                 location,
+                index,
                 id,
                 entry_mode,
-                ..
-            }) => (
-                Origin::TreeIndex,
-                TreeChange {
-                    status: TreeStatus::Deletion {
-                        previous_state: ChangeState {
-                            id: id.into_owned(),
-                            kind: into_tree_entry_kind(entry_mode)?,
+            }) => {
+                let res = (
+                    Origin::TreeIndex,
+                    TreeChange {
+                        status: TreeStatus::Deletion {
+                            previous_state: ChangeState {
+                                id: id.clone().into_owned(),
+                                kind: into_tree_entry_kind(entry_mode)?,
+                            },
                         },
+                        path: location.clone().into_owned(),
                     },
-                    path: location.into_owned(),
-                },
-            ),
+                );
+                index_changes.push(gix::diff::index::Change::Deletion {
+                    location,
+                    index,
+                    id,
+                    entry_mode,
+                });
+                res
+            }
             status::Item::TreeIndex(gix::diff::index::Change::Addition {
                 location,
+                index,
                 entry_mode,
                 id,
-                ..
-            }) => (
-                Origin::TreeIndex,
-                TreeChange {
-                    path: location.into_owned(),
-                    status: TreeStatus::Addition {
-                        is_untracked: false,
-                        state: ChangeState {
-                            id: id.into_owned(),
-                            kind: into_tree_entry_kind(entry_mode)?,
+            }) => {
+                let res = (
+                    Origin::TreeIndex,
+                    TreeChange {
+                        path: location.clone().into_owned(),
+                        status: TreeStatus::Addition {
+                            is_untracked: false,
+                            state: ChangeState {
+                                id: id.clone().into_owned(),
+                                kind: into_tree_entry_kind(entry_mode)?,
+                            },
                         },
                     },
-                },
-            ),
+                );
+                index_changes.push(gix::diff::index::ChangeRef::Addition {
+                    location,
+                    index,
+                    entry_mode,
+                    id,
+                });
+                res
+            }
             status::Item::TreeIndex(gix::diff::index::Change::Modification {
                 location,
+                previous_index,
                 previous_entry_mode,
+                index,
                 entry_mode,
                 previous_id,
                 id,
-                ..
             }) => {
                 let previous_state = ChangeState {
-                    id: previous_id.into_owned(),
+                    id: previous_id.clone().into_owned(),
                     kind: into_tree_entry_kind(previous_entry_mode)?,
                 };
                 let state = ChangeState {
-                    id: id.into_owned(),
+                    id: id.clone().into_owned(),
                     kind: into_tree_entry_kind(entry_mode)?,
                 };
-                (
+                let res = (
                     Origin::TreeIndex,
                     TreeChange {
-                        path: location.into_owned(),
+                        path: location.clone().into_owned(),
                         status: TreeStatus::Modification {
                             previous_state,
                             state,
                             flags: ModeFlags::calculate(&previous_state, &state),
                         },
                     },
-                )
+                );
+                index_changes.push(gix::diff::index::Change::Modification {
+                    location,
+                    previous_index,
+                    previous_entry_mode,
+                    previous_id,
+                    index,
+                    entry_mode,
+                    id,
+                });
+                res
             }
             status::Item::IndexWorktree(index_worktree::Item::Modification {
                 rela_path,
@@ -265,12 +331,21 @@ pub fn worktree_changes(repo: &gix::Repository) -> anyhow::Result<WorktreeChange
                 rela_path,
                 entry,
                 status:
-                    EntryStatus::Change(index_as_worktree::Change::SubmoduleModification(change)),
+                    EntryStatus::Change(index_as_worktree::Change::SubmoduleModification(
+                        submodule_change,
+                    )),
                 ..
             }) => {
-                let Some(checked_out_head_id) = change.checked_out_head_id else {
+                let Some(checked_out_head_id) = submodule_change.checked_out_head_id else {
                     continue;
                 };
+                // We can arrive here if the user configures to `ignore = none`, and there are
+                // only worktree changes.
+                // As we can't do anything with that unless submodules become first-class citizens,
+                // we ignore this case for now.
+                if entry.id == checked_out_head_id {
+                    continue;
+                }
                 let previous_state = ChangeState {
                     id: entry.id,
                     kind: into_tree_entry_kind(entry.mode)?,
@@ -378,9 +453,10 @@ pub fn worktree_changes(repo: &gix::Repository) -> anyhow::Result<WorktreeChange
             }
             status::Item::IndexWorktree(index_worktree::Item::Modification {
                 rela_path,
-                status: EntryStatus::Conflict(_conflict),
+                status: EntryStatus::Conflict { entries, .. },
                 ..
             }) => {
+                index_conflicts.push((rela_path.clone(), entries));
                 ignored_changes.push(IgnoredWorktreeChange {
                     path: rela_path,
                     status: IgnoredWorktreeTreeChangeStatus::Conflict,
@@ -447,10 +523,23 @@ pub fn worktree_changes(repo: &gix::Repository) -> anyhow::Result<WorktreeChange
                 &index,
                 &mut path_check,
             )? {
-                None => IgnoredWorktreeTreeChangeStatus::TreeIndexWorktreeChangeIneffective,
-                Some(merged) => {
+                [None, None] => IgnoredWorktreeTreeChangeStatus::TreeIndexWorktreeChangeIneffective,
+                [Some(merged), None] | [None, Some(merged)] => {
                     changes.push(merged);
                     IgnoredWorktreeTreeChangeStatus::TreeIndex
+                }
+                [Some(first), Some(second)] => {
+                    ignored_changes.push(IgnoredWorktreeChange {
+                        path: first.path.clone(),
+                        status: IgnoredWorktreeTreeChangeStatus::TreeIndex,
+                    });
+                    changes.push(first);
+                    ignored_changes.push(IgnoredWorktreeChange {
+                        path: second.path.clone(),
+                        status: IgnoredWorktreeTreeChangeStatus::TreeIndex,
+                    });
+                    changes.push(second);
+                    continue;
                 }
             };
             ignored_changes.push(IgnoredWorktreeChange {
@@ -466,6 +555,8 @@ pub fn worktree_changes(repo: &gix::Repository) -> anyhow::Result<WorktreeChange
     Ok(WorktreeChanges {
         changes,
         ignored_changes,
+        index_changes,
+        index_conflicts,
     })
 }
 
@@ -481,7 +572,7 @@ fn cmp_prefer_overlapping(a: &TreeChange, b: &TreeChange) -> Ordering {
 }
 
 /// Merge changes from tree/index into changes of `index_wt` and assure the merged result isn't a no-op,
-/// which is when `None` is returned.
+/// which is when `[None, None]` is returned. Otherwise, `[Some(_), None]` or `[Some(_), Some(_)]` are returned.
 /// Note that this case is more expensive as we have to hash the worktree version to check for a no-op.
 /// `diff_filter` is used to obtain hashes of worktree content.
 fn merge_changes(
@@ -490,7 +581,10 @@ fn merge_changes(
     filter: &mut gix::filter::Pipeline<'_>,
     index: &gix::index::State,
     path_check: &mut gix::status::plumbing::SymlinkCheck,
-) -> anyhow::Result<Option<TreeChange>> {
+) -> anyhow::Result<[Option<TreeChange>; 2]> {
+    fn single(change: TreeChange) -> [Option<TreeChange>; 2] {
+        [Some(change), None]
+    }
     let merged = match (&mut tree_index.status, &mut index_wt.status) {
         (TreeStatus::Modification { .. }, TreeStatus::Addition { .. })
         | (TreeStatus::Deletion { .. }, TreeStatus::Deletion { .. })
@@ -521,11 +615,11 @@ fn merge_changes(
         ) => {
             *is_untracked = true;
             *state = *state_wt;
-            return Ok(Some(tree_index));
+            return Ok(single(tree_index));
         }
         (TreeStatus::Addition { .. }, TreeStatus::Deletion { .. }) => {
             // keep the most recent known state, which is from the index.
-            return Ok(Some(index_wt));
+            return Ok(single(index_wt));
         }
         (
             TreeStatus::Addition { state, .. },
@@ -538,7 +632,7 @@ fn merge_changes(
             // Pretend the added file (in index) is the one that was deleted, hence the rename.
             *ps_wt = *state;
             // Can't be no-op as this is a rename
-            return Ok(Some(index_wt));
+            return Ok(single(index_wt));
         }
         (
             TreeStatus::Deletion { previous_state, .. },
@@ -565,7 +659,7 @@ fn merge_changes(
             index_wt
         }
         (TreeStatus::Modification { .. }, TreeStatus::Deletion { .. }) => {
-            return Ok(Some(index_wt));
+            return Ok(single(index_wt));
         }
         (
             TreeStatus::Modification { previous_state, .. },
@@ -577,17 +671,82 @@ fn merge_changes(
             *ps_wt = *previous_state;
             index_wt
         }
-        (TreeStatus::Rename { .. }, TreeStatus::Modification { .. }) => {
-            todo!("rename - mod")
+        (
+            TreeStatus::Rename {
+                state: state_index, ..
+            },
+            TreeStatus::Modification {
+                state: state_wt, ..
+            },
+        ) => {
+            *state_index = *state_wt;
+            return Ok(single(tree_index));
         }
-        (TreeStatus::Rename { .. }, TreeStatus::Rename { .. }) => {
-            todo!("rename - rename")
+        (
+            TreeStatus::Rename {
+                previous_path,
+                previous_state,
+                ..
+            },
+            TreeStatus::Rename {
+                previous_path: pp_wt,
+                previous_state: ps_wt,
+                ..
+            },
+        ) => {
+            // The worktree-rename is dominating, but we can combine both
+            // so there is the indexed version as source, and the one in the worktree
+            // as destination.
+            *pp_wt = std::mem::take(previous_path);
+            *ps_wt = *previous_state;
+            return Ok(single(index_wt));
         }
-        (TreeStatus::Rename { .. }, TreeStatus::Deletion { .. }) => {
-            todo!("rename - del")
+        (
+            TreeStatus::Rename {
+                previous_path,
+                previous_state,
+                ..
+            },
+            TreeStatus::Deletion { .. },
+        ) => {
+            // Destination is deleted as well, so what's left is a deletion of the source.
+            return Ok(single(TreeChange {
+                path: std::mem::take(previous_path),
+                status: TreeStatus::Deletion {
+                    previous_state: *previous_state,
+                },
+            }));
         }
-        (TreeStatus::Rename { .. }, TreeStatus::Addition { .. }) => {
-            todo!("rename-add")
+        (
+            TreeStatus::Rename {
+                state: state_index, ..
+            },
+            TreeStatus::Addition {
+                state: state_wt, ..
+            },
+        ) => {
+            return Ok([
+                Some(TreeChange {
+                    path: tree_index.path,
+                    status: TreeStatus::Addition {
+                        state: *state_index,
+                        // It's untracked as we know the destination isn't in the tree yet.
+                        // It's just in the index, which to us doesn't exist.
+                        is_untracked: true,
+                    },
+                }),
+                Some(TreeChange {
+                    path: index_wt.path,
+                    status: TreeStatus::Addition {
+                        state: *state_wt,
+                        // In theory, this should be considered tracked even though it's object file isn't
+                        // in the index (but in the tree) as this is the source of the rename.
+                        // However, doing so would trip up diffing code that uses this flag to know where to
+                        // read the initial state of a file from.
+                        is_untracked: true,
+                    },
+                }),
+            ]);
         }
     };
 
@@ -611,9 +770,9 @@ fn merge_changes(
         path_check,
     )?;
     Ok(if current == previous {
-        None
+        [None, None]
     } else {
-        Some(merged)
+        single(merged)
     })
 }
 
@@ -658,15 +817,15 @@ fn id_or_hash_from_worktree(
             ToGitOutcome::Process(mut stream) => {
                 let mut buf = repo.empty_reusable_buffer();
                 stream.read_to_end(&mut buf)?;
-                gix::objs::compute_hash(repo.object_hash(), gix::object::Kind::Blob, &buf)
+                gix::objs::compute_hash(repo.object_hash(), gix::object::Kind::Blob, &buf)?
             }
             ToGitOutcome::Buffer(buf) => {
-                gix::objs::compute_hash(repo.object_hash(), gix::object::Kind::Blob, buf)
+                gix::objs::compute_hash(repo.object_hash(), gix::object::Kind::Blob, buf)?
             }
         }
     } else if md.is_symlink() {
         let bytes = gix::path::os_string_into_bstring(std::fs::read_link(path)?.into())?;
-        gix::objs::compute_hash(repo.object_hash(), gix::object::Kind::Blob, &bytes)
+        gix::objs::compute_hash(repo.object_hash(), gix::object::Kind::Blob, &bytes)?
     } else {
         bail!("Cannot hash directory entries that aren't files or symlinks");
     };
@@ -716,15 +875,16 @@ impl TreeChange {
     /// for obtaining a working tree to read files from disk.
     /// Note that the mount of lines of context around each hunk are currently hardcoded to `3` as it *might* be relevant for creating
     /// commits later.
+    /// Return `None` if this change cannot produce a diff, typically because a submodule is involved.
     pub fn unified_diff(
         &self,
         repo: &gix::Repository,
         context_lines: u32,
-    ) -> anyhow::Result<UnifiedDiff> {
+    ) -> anyhow::Result<Option<UnifiedDiff>> {
         let mut diff_filter = crate::unified_diff::filter_from_state(
             repo,
             self.status.state(),
-            gix::diff::blob::pipeline::Mode::ToGitUnlessBinaryToTextIsPresent,
+            UnifiedDiff::CONVERSION_MODE,
         )?;
         self.unified_diff_with_filter(repo, context_lines, &mut diff_filter)
     }
@@ -735,7 +895,7 @@ impl TreeChange {
         repo: &gix::Repository,
         context_lines: u32,
         diff_filter: &mut gix::diff::blob::Platform,
-    ) -> anyhow::Result<UnifiedDiff> {
+    ) -> anyhow::Result<Option<UnifiedDiff>> {
         match &self.status {
             TreeStatus::Deletion { previous_state } => UnifiedDiff::compute_with_filter(
                 repo,
@@ -786,5 +946,14 @@ impl TreeChange {
                 diff_filter,
             ),
         }
+    }
+}
+
+impl std::fmt::Debug for WorktreeChanges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorktreeChanges")
+            .field("changes", &self.changes)
+            .field("ignored_changes", &self.ignored_changes)
+            .finish()
     }
 }

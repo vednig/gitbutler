@@ -24,11 +24,31 @@
   <b>But it is worth a shot</b>
 </details>
 
+<details>
+    <summary>Why was the cocktail sad?</summary>
+    <b>Because someone called him old-fashioned</b>
+</details>
+
+<details>
+    <summary>What did the grape say when the sommelier stepped on it?</summary>
+    <b>It gave a little wine</b>
+</details>
+
 ### Community dad jokes
 
 <details>
   <summary>Which computer serial interface has exactly 666MB/s of bandwidth?</summary>
   <b>SATA-N</b>
+</details>
+
+<details>
+  <summary>How do billboards talk?</summary>
+  <b>Sign language</b>
+</details>
+
+<details>
+  <summary>I got addicted to drinking brake fluid.</summary>
+  <b>Don't worry, I can stop anytime.</b>
 </details>
 
 <br>

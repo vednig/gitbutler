@@ -13,6 +13,7 @@ import { errorToLoadable } from '$lib/network/loadable';
 import { patchCommitTable } from '$lib/patches/patchCommitsSlice';
 import { apiToPatch, type LoadablePatchCommit } from '$lib/patches/types';
 import { POLLING_GLACIALLY, POLLING_REGULAR } from '$lib/polling';
+import { InjectionToken } from '@gitbutler/core/context';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { AppDispatch } from '$lib/redux/store.svelte';
 
@@ -23,6 +24,8 @@ type BranchUpdateParams = {
 	forgeUrl?: string;
 	forgeDescription?: string;
 };
+
+export const BRANCH_SERVICE: InjectionToken<BranchService> = new InjectionToken('BranchService');
 
 export class BranchService {
 	private readonly branchesInterests = new InterestStore<{
@@ -85,7 +88,7 @@ export class BranchService {
 					);
 				} catch (error: unknown) {
 					this.appDispatch.dispatch(
-						branchReviewListingTable.upsertOne(
+						branchReviewListingTable.addOne(
 							errorToLoadable(error, branchReviewListingKey(ownerSlug, projectSlug, branchStatus))
 						)
 					);
@@ -145,7 +148,7 @@ export class BranchService {
 						this.appDispatch.dispatch(patchCommitTable.upsertMany(patches));
 					}
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(branchTable.upsertOne(errorToLoadable(error, uuid)));
+					this.appDispatch.dispatch(branchTable.addOne(errorToLoadable(error, uuid)));
 				}
 			})
 			.createInterest();

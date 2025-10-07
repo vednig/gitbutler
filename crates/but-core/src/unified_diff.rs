@@ -2,11 +2,11 @@ use super::{ChangeState, UnifiedDiff};
 use bstr::{BStr, BString, ByteSlice};
 use gix::diff::blob::ResourceKind;
 use gix::diff::blob::platform::prepare_diff::Operation;
-use gix::diff::blob::unified_diff::ContextSize;
+use gix::diff::blob::unified_diff::{ConsumeBinaryHunk, ContextSize, HunkHeader};
 use serde::Serialize;
 
 /// A hunk as used in a [UnifiedDiff], which also contains all added and removed lines.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffHunk {
     /// The 1-based line number at which the previous version of the file started.
@@ -30,8 +30,21 @@ pub struct DiffHunk {
     ///
     /// The line separator is the one used in the original file and may be `LF` or `CRLF`.
     /// Note that the file-portion of the header isn't used here.
+    ///
+    /// Also note that this has possibly been decoded lossily, assuming UTF8 if the encoding couldn't be determined,
+    /// replacing invalid codepoints with markers.
     #[serde(serialize_with = "gitbutler_serde::bstring_lossy::serialize")]
     pub diff: BString,
+}
+
+impl std::fmt::Debug for DiffHunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            write!(f, r#"DiffHunk("{}")"#, self.diff)
+        } else {
+            write!(f, r#"DiffHunk("{:?}")"#, self.diff)
+        }
+    }
 }
 
 impl UnifiedDiff {
@@ -52,6 +65,7 @@ impl UnifiedDiff {
     /// `current_state` is either the state we know the resource currently has, or is `None`, if there is no current state.
     /// `previous_state`, if `None`, indicates the file is new so there is nothing to compare to.
     /// Otherwise, it's the state of the resource as previously known.
+    /// Return `None` if the given states cannot produce a diff, typically because a submodule is involved.
     ///
     /// ### Special Types
     ///
@@ -66,7 +80,7 @@ impl UnifiedDiff {
         current_state: impl Into<Option<ChangeState>>,
         previous_state: impl Into<Option<ChangeState>>,
         context_lines: u32,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Option<Self>> {
         let current_state = current_state.into();
         let mut cache = filter_from_state(repo, current_state, Self::CONVERSION_MODE)?;
         Self::compute_with_filter(
@@ -92,10 +106,11 @@ impl UnifiedDiff {
         previous_state: impl Into<Option<ChangeState>>,
         context_lines: u32,
         diff_filter: &mut gix::diff::blob::Platform,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Option<Self>> {
+        use gix::diff::blob;
         let current_state = current_state.into();
         let previous_state = previous_state.into();
-        diff_filter.set_resource(
+        match diff_filter.set_resource(
             current_state.map_or(repo.object_hash().null(), |state| state.id),
             current_state.map_or_else(
                 || {
@@ -108,8 +123,19 @@ impl UnifiedDiff {
             path.as_bstr(),
             ResourceKind::NewOrDestination,
             repo,
-        )?;
-        diff_filter.set_resource(
+        ) {
+            Ok(()) => {}
+            Err(
+                blob::platform::set_resource::Error::InvalidMode { .. }
+                | blob::platform::set_resource::Error::ConvertToDiffable(
+                    blob::pipeline::convert_to_diffable::Error::InvalidEntryKind { .. },
+                ),
+            ) => {
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        };
+        match diff_filter.set_resource(
             previous_state.map_or(repo.object_hash().null(), |state| state.id),
             previous_state.map_or_else(
                 || {
@@ -122,58 +148,61 @@ impl UnifiedDiff {
             previous_path.unwrap_or(path.as_bstr()),
             ResourceKind::OldOrSource,
             repo,
-        )?;
+        ) {
+            Ok(()) => {}
+            Err(
+                blob::platform::set_resource::Error::InvalidMode { .. }
+                | blob::platform::set_resource::Error::ConvertToDiffable(
+                    blob::pipeline::convert_to_diffable::Error::InvalidEntryKind { .. },
+                ),
+            ) => {
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        };
 
         let prep = diff_filter.prepare_diff()?;
-        Ok(match prep.operation {
+        Ok(Some(match prep.operation {
             Operation::InternalDiff { algorithm } => {
                 #[derive(Default)]
                 struct ProduceDiffHunk {
                     hunks: Vec<DiffHunk>,
                 }
-                impl gix::diff::blob::unified_diff::ConsumeHunk for ProduceDiffHunk {
-                    type Out = Vec<DiffHunk>;
-
-                    fn consume_hunk(
+                impl gix::diff::blob::unified_diff::ConsumeBinaryHunkDelegate for ProduceDiffHunk {
+                    fn consume_binary_hunk(
                         &mut self,
-                        before_hunk_start: u32,
-                        before_hunk_len: u32,
-                        after_hunk_start: u32,
-                        after_hunk_len: u32,
-                        header: &str,
+                        header: HunkHeader,
+                        header_str: &str,
                         hunk: &[u8],
                     ) -> std::io::Result<()> {
                         self.hunks.push(DiffHunk {
-                            old_start: before_hunk_start,
-                            old_lines: before_hunk_len,
-                            new_start: after_hunk_start,
-                            new_lines: after_hunk_len,
+                            old_start: header.before_hunk_start,
+                            old_lines: header.before_hunk_len,
+                            new_start: header.after_hunk_start,
+                            new_lines: header.after_hunk_len,
                             diff: {
-                                let mut buf = Vec::with_capacity(header.len() + hunk.len());
-                                buf.extend_from_slice(header.as_bytes());
+                                let mut buf = Vec::with_capacity(header_str.len() + hunk.len());
+                                buf.extend_from_slice(header_str.as_bytes());
                                 buf.extend_from_slice(hunk);
-                                buf.into()
+                                detect_and_convert_to_utf8(buf.into())
                             },
                         });
                         Ok(())
                     }
-
-                    fn finish(self) -> Self::Out {
-                        self.hunks
-                    }
                 }
                 let input = prep.interned_input();
+                let uni_diff = gix::diff::blob::UnifiedDiff::new(
+                    &input,
+                    ConsumeBinaryHunk::new(ProduceDiffHunk::default(), "\n"),
+                    ContextSize::symmetrical(context_lines),
+                );
+                let hunks = gix::diff::blob::diff(algorithm, &input, uni_diff)?.hunks;
+                let (lines_added, lines_removed) = compute_line_changes(&hunks);
                 UnifiedDiff::Patch {
-                    hunks: gix::diff::blob::diff(
-                        algorithm,
-                        &input,
-                        gix::diff::blob::UnifiedDiff::new(
-                            &input,
-                            ProduceDiffHunk::default(),
-                            gix::diff::blob::unified_diff::NewlineSeparator::AfterHeaderAndWhenNeeded("\n"),
-                            ContextSize::symmetrical(context_lines),
-                        ),
-                    )?,
+                    is_result_of_binary_to_text_conversion: prep.old_or_new_is_derived,
+                    hunks,
+                    lines_added,
+                    lines_removed,
                 }
             }
             Operation::ExternalCommand { .. } => {
@@ -185,7 +214,7 @@ impl UnifiedDiff {
                 use gix::diff::blob::platform::resource::Data;
                 fn size_for_data(data: Data<'_>) -> Option<u64> {
                     match data {
-                        Data::Missing | Data::Buffer(_) => None,
+                        Data::Missing | Data::Buffer { .. } => None,
                         Data::Binary { size } => Some(size),
                     }
                 }
@@ -204,8 +233,39 @@ impl UnifiedDiff {
                     UnifiedDiff::Binary
                 }
             }
-        })
+        }))
     }
+}
+
+/// Detect the encoding of the given byte content and convert it to UTF-8, after attempting to guess its encoding.
+/// Even if decoding failed, we always return the original `content` in the wirst case.
+fn detect_and_convert_to_utf8(content: BString) -> BString {
+    // Use chardet to detect the encoding
+    let mut detect = chardetng::EncodingDetector::new();
+    detect.feed(&content, true);
+    let (encoding, high_confidence) = detect.guess_assess(None, true);
+    if encoding.name() == "UTF-8" || !high_confidence {
+        return content;
+    }
+
+    // Convert to UTF-8
+    let (decoded, _actual_encoding, _used_replacement_chars) = encoding.decode(&content);
+    decoded.into_owned().into()
+}
+
+fn compute_line_changes(hunks: &Vec<DiffHunk>) -> (u32, u32) {
+    let mut lines_added = 0;
+    let mut lines_removed = 0;
+    for hunk in hunks {
+        hunk.diff.lines().for_each(|line| {
+            if line.starts_with(b"+") {
+                lines_added += 1;
+            } else if line.starts_with(b"-") {
+                lines_removed += 1;
+            }
+        });
+    }
+    (lines_added, lines_removed)
 }
 
 /// Produce a filter from `repo` and `state` using `mode` that is able to perform diffs of `state`.

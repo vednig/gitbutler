@@ -15,14 +15,12 @@ use crate::{init_opts, init_opts_bare, VAR_NO_CLEANUP};
 pub struct Suite {
     pub local_app_data: Option<TempDir>,
     pub storage: gitbutler_storage::Storage,
-    pub users: gitbutler_user::Controller,
-    pub projects: gitbutler_project::Controller,
 }
 
 impl Drop for Suite {
     fn drop(&mut self) {
         if std::env::var_os(VAR_NO_CLEANUP).is_some() {
-            let _ = self.local_app_data.take().unwrap().into_path();
+            let _ = self.local_app_data.take().unwrap().keep();
         }
     }
 }
@@ -31,13 +29,9 @@ impl Default for Suite {
     fn default() -> Self {
         let local_app_data = temp_dir();
         let storage = gitbutler_storage::Storage::new(local_app_data.path());
-        let users = gitbutler_user::Controller::from_path(local_app_data.path());
-        let projects = gitbutler_project::Controller::from_path(local_app_data.path());
         Self {
             storage,
             local_app_data: Some(local_app_data),
-            users,
-            projects,
         }
     }
 }
@@ -51,7 +45,7 @@ impl Suite {
         let user: gitbutler_user::User =
             serde_json::from_str(include_str!("fixtures/user/minimal.v1"))
                 .expect("valid v1 user file");
-        self.users.set_user(&user).expect("failed to add user");
+        gitbutler_user::set_user(&user).expect("failed to add user");
         user
     }
 
@@ -70,12 +64,14 @@ impl Suite {
         }
         commit_all(&repository);
 
-        (
-            self.projects
-                .add(repository.path().parent().unwrap())
-                .expect("failed to add project"),
-            tmp,
-        )
+        let outcome = gitbutler_project::add_with_path(
+            self.local_app_data(),
+            repository.path().parent().unwrap(),
+        );
+
+        let project = outcome.expect("failed to add project").unwrap_project();
+
+        (project, tmp)
     }
 
     pub fn new_case_with_files(&self, fs: HashMap<PathBuf, &str>) -> Case {
@@ -102,7 +98,7 @@ impl Drop for Case {
             .take()
             .filter(|_| std::env::var_os(VAR_NO_CLEANUP).is_some())
         {
-            let _ = tmp.into_path();
+            let _ = tmp.keep();
         }
     }
 }
@@ -118,11 +114,8 @@ impl Case {
         }
     }
 
-    pub fn refresh(mut self, suite: &Suite) -> Self {
-        let project = suite
-            .projects
-            .get(self.project.id)
-            .expect("failed to get project");
+    pub fn refresh(mut self, _suite: &Suite) -> Self {
+        let project = gitbutler_project::get(self.project.id).expect("failed to get project");
         let ctx = CommandContext::open(&project, AppSettings::default())
             .expect("failed to create project repository");
         Self {

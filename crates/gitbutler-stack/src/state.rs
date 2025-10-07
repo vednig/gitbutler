@@ -3,27 +3,25 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Result};
-use git2::Repository;
-use gitbutler_error::error::Code;
-use gitbutler_fs::read_toml_file_or_default;
-use gitbutler_oxidize::OidExt as _;
-use gitbutler_reference::Refname;
-use gitbutler_repo::commit_message::CommitMessage;
-use gitbutler_serde::object_id_opt;
-use itertools::Itertools;
-use serde::{Deserialize, Serialize};
-
 use crate::{
     stack::{Stack, StackId},
     target::Target,
 };
+use anyhow::{anyhow, Result};
+use but_graph::virtual_branches_legacy_types;
+use git2::Repository;
+use gitbutler_error::error::Code;
+use gitbutler_fs::read_toml_file_or_default;
+use gitbutler_oxidize::{ObjectIdExt, OidExt as _, RepoExt};
+use gitbutler_reference::Refname;
+use gitbutler_repo::commit_message::CommitMessage;
+use itertools::Itertools;
 
 const LAST_PUSHED_BASE_VERSION_HEADER: &str = "base-commit-version";
 const LAST_PUSHED_BASE_VERSION: &str = "1";
 
 /// The state of virtual branches data, as persisted in a TOML file.
-#[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct VirtualBranches {
     /// This is the target/base that is set when a repo is added to gb
     pub default_target: Option<Target>,
@@ -32,15 +30,56 @@ pub struct VirtualBranches {
     /// The current state of the virtual branches
     pub branches: HashMap<StackId, Stack>,
 
-    #[serde(with = "object_id_opt", default)]
     last_pushed_base: Option<gix::ObjectId>,
+}
+
+impl From<virtual_branches_legacy_types::VirtualBranches> for VirtualBranches {
+    fn from(
+        virtual_branches_legacy_types::VirtualBranches {
+            default_target,
+            branch_targets,
+            branches,
+            last_pushed_base,
+        }: virtual_branches_legacy_types::VirtualBranches,
+    ) -> Self {
+        VirtualBranches {
+            default_target: default_target.map(Into::into),
+            branch_targets: branch_targets
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            branches: branches.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            last_pushed_base,
+        }
+    }
+}
+
+impl From<VirtualBranches> for virtual_branches_legacy_types::VirtualBranches {
+    fn from(
+        VirtualBranches {
+            default_target,
+            branch_targets,
+            branches,
+            last_pushed_base,
+        }: VirtualBranches,
+    ) -> Self {
+        virtual_branches_legacy_types::VirtualBranches {
+            default_target: default_target.map(Into::into),
+            branch_targets: branch_targets
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            branches: branches.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            last_pushed_base,
+        }
+    }
 }
 
 impl VirtualBranches {
     /// Lists all virtual branches that are in the user's workspace.
     ///
     /// Errors if the file cannot be read or written.
-    pub(crate) fn list_all_stacks(&self) -> Result<Vec<Stack>> {
+    pub fn list_all_stacks(&self) -> Result<Vec<Stack>> {
         let branches: Vec<Stack> = self.branches.values().cloned().collect();
         Ok(branches)
     }
@@ -149,12 +188,34 @@ impl VirtualBranchesHandle {
         }))
     }
 
+    pub fn find_by_top_reference_name_where_not_in_workspace(
+        &self,
+        refname: &str,
+    ) -> Result<Option<Stack>> {
+        let stacks = self.list_all_stacks()?;
+        Ok(stacks.into_iter().find(|stack| {
+            if stack.in_workspace {
+                return false;
+            }
+
+            if let Some(head_branch) = stack.heads.last() {
+                if let Ok(full_name) = head_branch.full_name() {
+                    return full_name.to_string() == refname;
+                } else {
+                    return false;
+                }
+            }
+
+            false
+        }))
+    }
+
     /// Gets the state of the given virtual branch.
     ///
     /// Errors if the file cannot be read or written.
     pub fn get_stack_in_workspace(&self, id: StackId) -> Result<Stack> {
         self.try_stack_in_workspace(id)?
-            .ok_or_else(|| anyhow!("branch with ID {id} not found"))
+            .ok_or_else(|| anyhow!("branch with ID {id} not found").context(Code::BranchNotFound))
     }
 
     /// Gets the state of the given virtual branch.
@@ -162,7 +223,7 @@ impl VirtualBranchesHandle {
     /// Errors if the file cannot be read or written.
     pub fn get_stack(&self, id: StackId) -> Result<Stack> {
         self.try_stack(id)?
-            .ok_or_else(|| anyhow!("branch with ID {id} not found"))
+            .ok_or_else(|| anyhow!("branch with ID {id} not found").context(Code::BranchNotFound))
     }
 
     /// Gets the state of the given virtual branch returning `Some(branch)` or `None`
@@ -203,7 +264,9 @@ impl VirtualBranchesHandle {
     ///
     /// If the file does not exist, it will be created.
     pub fn read_file(&self) -> Result<VirtualBranches> {
-        read_toml_file_or_default(&self.file_path)
+        let data: virtual_branches_legacy_types::VirtualBranches =
+            read_toml_file_or_default(&self.file_path)?;
+        Ok(data.into())
     }
 
     /// Write the given `virtual_branches` back to disk in one go.
@@ -263,18 +326,21 @@ impl VirtualBranchesHandle {
             .filter(|b| !b.in_workspace)
             .collect_vec();
         let mut to_remove: Vec<StackId> = vec![];
+        let gix_repo = repo.to_gix()?;
         for branch in stacks_not_in_workspace {
             if branch.not_in_workspace_wip_change_id.is_some() {
                 continue; // Skip branches that have a WIP commit
             }
-            if repo.find_commit(branch.head()).is_err() {
-                // if the head commit cant be found, we can GC the branch
-                to_remove.push(branch.id);
-            } else {
-                // if there are no commits between the head and the merge base,
-                // i.e. the head is the merge base, we can GC the branch
-                if branch.head() == repo.merge_base(branch.head(), target.sha)? {
+            if let Ok(branch_head) = branch.head_oid(&gix_repo).map(|h| h.to_git2()) {
+                if repo.find_commit(branch_head).is_err() {
+                    // if the head commit cant be found, we can GC the branch
                     to_remove.push(branch.id);
+                } else {
+                    // if there are no commits between the head and the merge base,
+                    // i.e. the head is the merge base, we can GC the branch
+                    if branch_head == repo.merge_base(branch_head, target.sha)? {
+                        to_remove.push(branch.id);
+                    }
                 }
             }
         }
@@ -361,7 +427,8 @@ impl VirtualBranchesHandle {
 }
 
 fn write<P: AsRef<Path>>(file_path: P, virtual_branches: &VirtualBranches) -> Result<()> {
-    gitbutler_fs::write(file_path, toml::to_string(&virtual_branches)?)
+    let v = virtual_branches_legacy_types::VirtualBranches::from(virtual_branches.clone());
+    gitbutler_fs::create_dirs_then_write(file_path, toml::to_string(&v)?).map_err(Into::into)
 }
 
 /// Re-commit a commit with altered parentage

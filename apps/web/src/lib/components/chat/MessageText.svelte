@@ -12,15 +12,16 @@
 
 	const userMap = $derived(new Map(mentions.map((user) => [user.id, user])));
 	const words = $derived(getChatMessageWords(text, userMap));
+	const SPACE = ' ';
 </script>
 
 <span>
 	{#each words as word}
 		{#if word.type === 'text'}
-			{word.value + ' '}
+			{word.value}
 		{:else}
 			<Mention mention={word.mention} />
-			{' '}
 		{/if}
+		{SPACE}
 	{/each}
 </span>

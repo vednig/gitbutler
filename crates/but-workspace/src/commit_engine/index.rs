@@ -1,7 +1,7 @@
 use bstr::{BStr, ByteSlice};
 use std::path::Path;
 
-/// Turn `rhs` into `lhs` by modifying `rhs`. This will leave `rhs` intact as much as possible, but will remove
+/// Turn `rhs` into `lhs` by modifying `rhs`. This will leave `rhs` intact as much as possible.
 /// Note that conflicting entries will be replaced by an addition or edit automatically.
 /// extensions that might be affected by these changes, for a lack of finesse with our edits.
 pub fn apply_lhs_to_rhs(
@@ -43,13 +43,12 @@ pub fn apply_lhs_to_rhs(
                 previous_id: id,
                 ..
             } => {
-                let md = gix::index::fs::Metadata::from_path_no_follow(
-                    &workdir.join(gix::path::from_bstr(location.as_bstr())),
-                )?;
+                // We cannot be sure that the index is representing the worktree, so Git has to be forced to recalculate the hashes.
+                let assume_index_does_not_match_worktree = None;
                 needs_sorting |= upsert_index_entry(
                     rhs,
                     location.as_bstr(),
-                    &md,
+                    assume_index_does_not_match_worktree,
                     id.into_owned(),
                     entry_mode,
                     gix::index::entry::Flags::empty(),
@@ -73,10 +72,12 @@ pub fn apply_lhs_to_rhs(
 // TODO(gix): this could be a platform in Gix which supports these kinds of edits while assuring
 //       consistency. It could use some tricks to not have worst-case performance like this has.
 //       It really is index-add that we need.
+// If `md` is `None`, we will write a null-stat that will trigger Git to recheck the content each time, i.e. the index isn't considered fresh.
+// Otherwise, if `md` is `Some()`, Git will always be made to think that the worktree file matches the state in the index, so that better be the case.
 pub fn upsert_index_entry(
     index: &mut gix::index::State,
     rela_path: &BStr,
-    md: &gix::index::fs::Metadata,
+    md: Option<&gix::index::fs::Metadata>,
     id: gix::ObjectId,
     mode: gix::index::entry::Mode,
     add_flags: gix::index::entry::Flags,
@@ -95,7 +96,7 @@ pub fn upsert_index_entry(
         Stage::Unconflicted,
         *num_sorted_entries,
     ) {
-        #[allow(clippy::indexing_slicing)]
+        #[expect(clippy::indexing_slicing)]
         let entry = &mut index.entries_mut()[pos];
         // NOTE: it's needed to set the values to 0 here or else 1 in 40 times or so
         //       git status will report the file didn't change even though it did.
@@ -108,7 +109,8 @@ pub fn upsert_index_entry(
         false
     } else {
         index.dangerously_push_entry(
-            gix::index::entry::Stat::from_fs(md)?,
+            md.map(gix::index::entry::Stat::from_fs)
+                .unwrap_or_else(|| Ok(Default::default()))?,
             id,
             add_flags,
             mode,

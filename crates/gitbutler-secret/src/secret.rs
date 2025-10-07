@@ -36,10 +36,36 @@ pub fn persist(handle: &str, secret: &Sensitive<String>, namespace: Namespace) -
 
 /// Obtain the previously [stored](persist()) secret known as `handle` from `namespace`.
 pub fn retrieve(handle: &str, namespace: Namespace) -> Result<Option<Sensitive<String>>> {
-    match entry_for(handle, namespace)?.get_password() {
+    match entry_for(handle, namespace)
+        .map_err(annotate_linux_keychain)?
+        .get_password()
+    {
         Ok(secret) => Ok(Some(Sensitive(secret))),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(err) => Err(err.into()),
+        Err(err) => Err(annotate_linux_keychain(err.into())),
+    }
+}
+
+fn annotate_linux_keychain(err: anyhow::Error) -> anyhow::Error {
+    if !cfg!(target_os = "linux") {
+        return err;
+    }
+
+    // We could try to match on the original, but due to a lack of testing
+    // we have to blanket-catch these errors in multiple places.
+    // This is fine, except for when we might be dependent on the locale.
+    // If this is an issue, actually test this.
+    let err_string = err.to_string();
+    if err_string.contains(" org.freedesktop.secrets ")
+        // This is supposed to prevent the DBus-Error to trigger a popup on CI which disturbs E2E tests.
+        // Ideally, e2e could be made to auto-confirm this particular message after a timeout, maybe?
+        || (!cfg!(debug_assertions) && err_string.contains("DBus error"))
+    {
+        err.context(gitbutler_error::error::Code::SecretKeychainNotFound)
+    } else if err_string.contains("Secret Service: no result found") {
+        err.context(gitbutler_error::error::Code::MissingLoginKeychain)
+    } else {
+        err
     }
 }
 
@@ -168,7 +194,7 @@ pub mod git_credentials {
             Ok(())
         }
 
-        #[instrument(skip(self))]
+        #[instrument(skip(self), level = "trace")]
         fn get_password(&self) -> keyring::Result<String> {
             let (mut cascade, get_action, prompt) = self
                 .store

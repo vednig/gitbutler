@@ -1,4 +1,5 @@
 import type { DropzoneHandler } from '$lib/dragging/handler';
+import type { DropzoneRegistry } from '$lib/dragging/registry';
 
 export type HoverArgs = {
 	handler?: DropzoneHandler;
@@ -12,6 +13,7 @@ export interface DropzoneConfiguration {
 	onHoverStart: (args: HoverArgs) => void;
 	onHoverEnd: () => void;
 	target: string;
+	registry: DropzoneRegistry;
 }
 
 export class Dropzone {
@@ -68,13 +70,13 @@ export class Dropzone {
 	}
 
 	deactivate() {
-		if (this.registered) {
-			this.unregisterListeners();
-		}
+		if (this.registered) this.unregisterListeners();
+
+		if (this.activated) this.configuration.onActivationEnd();
 		this.activated = false;
+
+		if (this.hovered) this.configuration.onHoverEnd();
 		this.hovered = false;
-		this.configuration.onActivationEnd();
-		this.configuration.onHoverEnd();
 	}
 
 	private registerListeners() {
@@ -103,6 +105,7 @@ export class Dropzone {
 
 	private async onDrop(e: DragEvent) {
 		e.preventDefault();
+		e.stopPropagation();
 		if (!this.activated) return;
 		this.acceptedHandler?.ondrop(this.data);
 	}
@@ -122,12 +125,11 @@ export class Dropzone {
 		this.configuration.onHoverEnd();
 	}
 
+	/** It is assumed at most one will accept the data. */
 	private get acceptedHandler() {
 		return this.configuration.handlers.find((h) => h.accepts(this.data));
 	}
 }
-
-export const dropzoneRegistry = new Map<HTMLElement, Dropzone>();
 
 export function dropzone(node: HTMLElement, configuration: DropzoneConfiguration) {
 	let instance: Dropzone | undefined;
@@ -140,7 +142,7 @@ export function dropzone(node: HTMLElement, configuration: DropzoneConfiguration
 		}
 
 		instance = new Dropzone(config, node);
-		dropzoneRegistry.set(node, instance);
+		configuration.registry.set(node, instance);
 	}
 
 	function cleanup() {
@@ -148,7 +150,7 @@ export function dropzone(node: HTMLElement, configuration: DropzoneConfiguration
 			instance.deactivate();
 			instance = undefined;
 		}
-		dropzoneRegistry.delete(node);
+		configuration.registry.delete(node);
 	}
 
 	setup(configuration);

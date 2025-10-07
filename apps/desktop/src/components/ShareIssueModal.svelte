@@ -1,18 +1,15 @@
 <script lang="ts">
-	import { invoke } from '$lib/backend/ipc';
-	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
-	import * as zip from '$lib/support/dataSharing';
-	import { User } from '$lib/user/user';
-	import { getContext, getContextStore } from '@gitbutler/shared/context';
-	import { HttpClient } from '@gitbutler/shared/network/httpClient';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Checkbox from '@gitbutler/ui/Checkbox.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
-	import * as toasts from '@gitbutler/ui/toasts';
-	import { getVersion } from '@tauri-apps/api/app';
 	import { page } from '$app/stores';
+	import { BACKEND } from '$lib/backend';
+	import { FILE_SERVICE } from '$lib/files/fileService';
+	import { GIT_SERVICE } from '$lib/git/gitService';
+	import { SHORTCUT_SERVICE } from '$lib/shortcuts/shortcutService';
+	import { DATA_SHARING_SERVICE } from '$lib/support/dataSharing';
+	import { USER } from '$lib/user/user';
+	import { inject } from '@gitbutler/core/context';
+	import { HTTP_CLIENT } from '@gitbutler/shared/network/httpClient';
+
+	import { Button, Checkbox, Modal, Textarea, EmailTextbox, chipToasts } from '@gitbutler/ui';
 
 	type Feedback = {
 		id: number;
@@ -23,18 +20,20 @@
 		updated_at: string;
 	};
 
-	const shortcutService = getContext(ShortcutService);
-	const httpClient = getContext(HttpClient);
-	const user = getContextStore(User);
+	const shortcutService = inject(SHORTCUT_SERVICE);
+	const httpClient = inject(HTTP_CLIENT);
+	const fileService = inject(FILE_SERVICE);
+	const dataSharingService = inject(DATA_SHARING_SERVICE);
+	const gitService = inject(GIT_SERVICE);
+	const user = inject(USER);
+	const backend = inject(BACKEND);
 
 	export function show() {
 		modal?.show();
 	}
 
 	async function gitIndexLength() {
-		return await invoke<void>('git_index_size', {
-			projectId: projectId
-		});
+		return await gitService.indexSize(projectId);
 	}
 
 	let modal: ReturnType<typeof Modal> | undefined = $state();
@@ -43,6 +42,7 @@
 	let emailInputValue = $state('');
 	let sendLogs = $state(false);
 	let sendProjectRepository = $state(false);
+	let sendGraph = $state(false);
 
 	const projectId = $derived($page.params.projectId!);
 
@@ -50,11 +50,12 @@
 		messageInputValue = '';
 		sendLogs = false;
 		sendProjectRepository = false;
+		sendGraph = false;
 	}
 
 	async function readZipFile(path: string, filename?: string): Promise<File | Blob> {
-		const { readFile } = await import('@tauri-apps/plugin-fs');
-		const file = await readFile(path);
+		// Using `new Uint8Array` to get an `ArrayBuffer` rather than `ArrayBufferLike`.
+		const file = new Uint8Array(await fileService.readFile(path));
 		const fileName = filename ?? path.split('/').pop();
 		return fileName
 			? new File([file], fileName, { type: 'application/zip' })
@@ -67,33 +68,45 @@
 
 		// put together context information to send with the feedback
 		let context = '';
-		const appVersion = await getVersion();
+		const appInfo = await backend.getAppInfo();
+		const appVersion = appInfo.version;
 		const indexLength = await gitIndexLength();
 		context += 'GitButler Version: ' + appVersion + '\n';
 		context += 'Browser: ' + navigator.userAgent + '\n';
 		context += 'URL: ' + window.location.href + '\n';
 		context += 'Length of index: ' + indexLength + '\n';
 
-		toasts.promise(
+		chipToasts.promise(
 			Promise.all([
-				sendLogs ? zip.logs().then(async (path) => await readZipFile(path, 'logs.zip')) : undefined,
+				sendLogs
+					? dataSharingService.logs().then(async (path) => await readZipFile(path, 'logs.zip'))
+					: undefined,
 				sendProjectRepository
-					? zip
-							.projectData({ projectId })
+					? dataSharingService
+							.projectData(projectId)
 							.then(async (path) => await readZipFile(path, 'project.zip'))
+					: undefined,
+				sendGraph
+					? dataSharingService
+							.graphFile(projectId)
+							.then(async (path) => await readZipFile(path, 'graph.zip'))
 					: undefined
 			]).then(
-				async ([logs, repo]) =>
+				async ([logs, repo, graph]) =>
 					await createFeedback($user?.access_token, {
 						email,
 						message,
 						context,
 						logs,
-						repo
+						repo,
+						graph
 					})
 			),
 			{
-				loading: !sendLogs && !sendProjectRepository ? 'Sending feedback...' : 'Uploading data...',
+				loading:
+					!sendLogs && !sendProjectRepository && !sendGraph
+						? 'Sending feedback...'
+						: 'Uploading data...',
 				success: 'Feedback sent successfully',
 				error: 'Failed to send feedback'
 			}
@@ -109,6 +122,7 @@
 			context?: string;
 			logs?: Blob | File;
 			repo?: Blob | File;
+			graph?: Blob | File;
 		}
 	): Promise<Feedback> {
 		const formData = new FormData();
@@ -117,6 +131,7 @@
 		if (params.context) formData.append('context', params.context);
 		if (params.logs) formData.append('logs', params.logs);
 		if (params.repo) formData.append('repo', params.repo);
+		if (params.graph) formData.append('graph', params.graph);
 
 		// Content Type must be unset for the right form-data border to be set automatically
 		return await httpClient.put('feedback', {
@@ -130,9 +145,7 @@
 		modal?.close();
 	}
 
-	shortcutService.on('share-debug-info', () => {
-		show();
-	});
+	$effect(() => shortcutService.on('share-debug-info', () => show()));
 </script>
 
 <Modal
@@ -147,10 +160,9 @@
 		</p>
 
 		{#if !$user}
-			<Textbox
+			<EmailTextbox
 				label="Email"
 				placeholder="Provide an email so that we can get back to you"
-				type="email"
 				bind:value={emailInputValue}
 				required
 				autocomplete={false}
@@ -189,6 +201,10 @@
 					<Checkbox name="project-repository" bind:checked={sendProjectRepository} />
 					<label class="text-13" for="project-repository">Share project repository</label>
 				</div>
+				<div class="content-wrapper__checkbox">
+					<Checkbox name="graph" bind:checked={sendGraph} />
+					<label class="text-13" for="graph">Share anonymized commit-graph</label>
+				</div>
 			{/if}
 		</div>
 	</div>
@@ -196,7 +212,9 @@
 	<!-- Use our own close function -->
 	{#snippet controls()}
 		<Button kind="outline" type="reset" onclick={close}>Close</Button>
-		<Button style="pop" type="submit">Share with GitButler</Button>
+		<Button disabled={!sendLogs && !sendProjectRepository && !sendGraph} style="pop" type="submit"
+			>Share with GitButler</Button
+		>
 	{/snippet}
 </Modal>
 

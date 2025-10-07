@@ -1,4 +1,4 @@
-#![deny(missing_docs, rust_2018_idioms)]
+#![deny(missing_docs)]
 //! The basic primitives that GitButler is built around.
 //!
 //! It also is a catch-all for code until it's worth putting it into its own crate.
@@ -44,10 +44,11 @@
 use bstr::BString;
 use gix::object::tree::EntryKind;
 use gix::refs::FullNameRef;
+use gix::status::plumbing::index_as_worktree::ConflictIndexEntry;
 use serde::Serialize;
 use std::any::Any;
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
+use std::path::PathBuf;
 
 /// Functions to obtain changes between various items.
 pub mod diff;
@@ -58,20 +59,25 @@ pub mod commit;
 /// Types for use in the user interface.
 pub mod ui;
 
+mod id;
+pub use id::Id;
+
 /// utility types
 pub mod unified_diff;
 
 /// utilities for command-invocation.
 pub mod cmd;
 
-mod settings;
-pub use settings::git::GitConfigSettings;
+/// Various settings
+pub mod settings;
+pub use settings::git::types::GitConfigSettings;
 
 mod repo_ext;
 pub use repo_ext::RepositoryExt;
 
 /// Various types
 pub mod ref_metadata;
+use crate::ref_metadata::ValueInfo;
 
 /// A trait to associate arbitrary metadata with any *Git reference name*.
 /// Note that a single reference name can have multiple distinct pieces of metadata associated with it.
@@ -99,6 +105,34 @@ pub trait RefMetadata {
         &self,
         ref_name: &gix::refs::FullNameRef,
     ) -> anyhow::Result<Self::Handle<ref_metadata::Branch>>;
+
+    /// Like [`branch()`](Self::branch()), but instead of possibly returning default values, return an
+    /// optional branch instead.
+    ///
+    /// This means the returned branch data is never the default value.
+    fn branch_opt(
+        &self,
+        ref_name: &gix::refs::FullNameRef,
+    ) -> anyhow::Result<Option<Self::Handle<ref_metadata::Branch>>> {
+        let branch = self.branch(ref_name)?;
+        Ok(if branch.is_default() {
+            None
+        } else {
+            Some(branch)
+        })
+    }
+
+    /// Like [`workspace()`](Self::workspace()), but instead of possibly returning default values, return an
+    /// optional workspace instead.
+    ///
+    /// This means the returned workspace data is never the default value.
+    fn workspace_opt(
+        &self,
+        ref_name: &gix::refs::FullNameRef,
+    ) -> anyhow::Result<Option<Self::Handle<ref_metadata::Workspace>>> {
+        let ws = self.workspace(ref_name)?;
+        Ok(if ws.is_default() { None } else { Some(ws) })
+    }
 
     /// Set workspace metadata to match `value`.
     fn set_workspace(
@@ -137,9 +171,17 @@ pub enum UnifiedDiff {
         size_in_bytes: u64,
     },
     /// A patch that if applied to the previous state of the resource would yield the current state.
+    #[serde(rename_all = "camelCase")]
     Patch {
         /// All non-overlapping hunks, including their context lines.
         hunks: Vec<unified_diff::DiffHunk>,
+        /// If `true`, a binary to text filter (`textconv` in Git config) was used to obtain the `hunks` in the diff.
+        /// This means hunk-based operations must be disabled.
+        is_result_of_binary_to_text_conversion: bool,
+        /// The total amount of lines added.
+        lines_added: u32,
+        /// The total amount of lines removed.
+        lines_removed: u32,
     },
 }
 
@@ -168,7 +210,7 @@ impl std::fmt::Display for Reference {
 /// Open a repository in such a way that the object cache is set to accelerate merge operations.
 ///
 /// As it depends on the size of the tree, the index will be loaded for that.
-pub fn open_repo_for_merging(path: &Path) -> anyhow::Result<gix::Repository> {
+pub fn open_repo_for_merging(path: impl Into<PathBuf>) -> anyhow::Result<gix::Repository> {
     let mut repo = gix::open(path)?;
     let bytes = repo.compute_object_cache_size_for_tree_diffs(&***repo.index_or_empty()?);
     repo.object_cache_size_if_unset(bytes);
@@ -180,7 +222,7 @@ pub fn open_repo_for_merging(path: &Path) -> anyhow::Result<gix::Repository> {
 /// specific use-cases.
 ///
 /// Note that the repository isn't discovered, but must exist at `path`.
-pub fn open_repo(path: &Path) -> anyhow::Result<gix::Repository> {
+pub fn open_repo(path: impl Into<PathBuf>) -> anyhow::Result<gix::Repository> {
     Ok(gix::open(path)?)
 }
 
@@ -287,29 +329,33 @@ pub enum IgnoredWorktreeTreeChangeStatus {
 }
 
 /// A way to indicate that a path in the index isn't suitable for committing and needs to be dealt with.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct IgnoredWorktreeChange {
     /// The worktree-relative path to the change.
     #[serde(serialize_with = "gitbutler_serde::bstring_lossy::serialize")]
-    path: BString,
+    pub path: BString,
     /// The status that caused this change to be ignored.
-    status: IgnoredWorktreeTreeChangeStatus,
+    pub status: IgnoredWorktreeTreeChangeStatus,
 }
 
 /// The type returned by [`worktree_changes()`](diff::worktree_changes).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WorktreeChanges {
     /// Changes that could be committed.
     pub changes: Vec<TreeChange>,
     /// Changes that were in the index that we can't handle. The user can see them and interact with them to clear them out before a commit can be made.
     pub ignored_changes: Vec<IgnoredWorktreeChange>,
+    /// All unprocessed changes to the index.
+    pub index_changes: Vec<gix::diff::index::Change>,
+    /// The conflicting index entries, along with their relative path `(rela_path, [Entries(base, ours, theirs)])`.
+    pub index_conflicts: Vec<(BString, Box<[Option<ConflictIndexEntry>; 3]>)>,
 }
 
 /// Computed using the file kinds/modes of two [`ChangeState`] instances to represent
 /// the *dominant* change to display. Note that it can stack with a content change,
 /// but *should not only in case of a `TypeChange*`*.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum ModeFlags {
     ExecutableBitAdded,
     ExecutableBitRemoved,

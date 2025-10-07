@@ -53,6 +53,9 @@ fn executable_bit_added_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -91,6 +94,9 @@ fn executable_bit_removed_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -129,6 +135,9 @@ fn executable_bit_removed_in_index() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -167,6 +176,9 @@ fn executable_bit_added_in_index() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -198,6 +210,9 @@ fn untracked_in_unborn() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -229,6 +244,9 @@ fn added_in_unborn() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -281,6 +299,47 @@ fn submodule_added_in_unborn() -> Result<()> {
         unified_diffs(actual, &repo).unwrap_err().to_string(),
         "Can only diff blobs and links, not Commit"
     );
+    Ok(())
+}
+
+#[test]
+fn submodule_changes_ignored_in_configuration() -> Result<()> {
+    let repo = repo("submodule-changed-head-ignore-all")?;
+    let actual = diff::worktree_changes(&repo)?;
+    insta::assert_debug_snapshot!(actual, @r#"
+    WorktreeChanges {
+        changes: [
+            TreeChange {
+                path: ".gitmodules",
+                status: Modification {
+                    previous_state: ChangeState {
+                        id: Sha1(46f8c8b821d79a888a1ea0b30ec9f5d7e90821b0),
+                        kind: Blob,
+                    },
+                    state: ChangeState {
+                        id: Sha1(0000000000000000000000000000000000000000),
+                        kind: Blob,
+                    },
+                    flags: None,
+                },
+            },
+        ],
+        ignored_changes: [],
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn submodule_changes_set_to_all_in_config_but_has_uncommittable_changes() -> Result<()> {
+    let repo = repo("submodule-changed-worktree-ignore-none")?;
+    let actual = diff::worktree_changes(&repo)?;
+    insta::assert_debug_snapshot!(actual, @r#"
+    WorktreeChanges {
+        changes: [],
+        ignored_changes: [],
+    }
+    "#);
     Ok(())
 }
 
@@ -350,14 +409,13 @@ fn case_folding_worktree_changes() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 0,
-                    diff: "@@ -1,1 +1,0 @@\n-content\n",
-                },
+                DiffHunk("@@ -1,1 +1,0 @@
+                -content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -399,14 +457,13 @@ fn case_folding_worktree_and_index_changes() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 0,
-                    diff: "@@ -1,1 +1,0 @@\n-content\n",
-                },
+                DiffHunk("@@ -1,1 +1,0 @@
+                -content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -447,17 +504,19 @@ fn file_to_dir_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,0 +1,1 @@\n+content\n",
-                },
+                DiffHunk("@@ -1,0 +1,1 @@
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 0,
         },
     ]
     "#);
@@ -498,17 +557,19 @@ fn file_to_dir_in_index() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,0 +1,1 @@\n+content\n",
-                },
+                DiffHunk("@@ -1,0 +1,1 @@
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 0,
         },
     ]
     "#);
@@ -549,17 +610,19 @@ fn dir_to_file_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,0 +1,1 @@\n+content\n",
-                },
+                DiffHunk("@@ -1,0 +1,1 @@
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 0,
         },
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     "#);
@@ -600,17 +663,19 @@ fn dir_to_file_in_index() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,0 +1,1 @@\n+content\n",
-                },
+                DiffHunk("@@ -1,0 +1,1 @@
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 0,
         },
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     "#);
@@ -649,14 +714,14 @@ fn file_to_symlink_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,1 +1,1 @@\n-content\n+does-not-exist\n",
-                },
+                DiffHunk("@@ -1,1 +1,1 @@
+                -content
+                +does-not-exist
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -713,14 +778,14 @@ fn file_to_symlink_in_index() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,1 +1,1 @@\n-content\n+does-not-exist\n",
-                },
+                DiffHunk("@@ -1,1 +1,1 @@
+                -content
+                +does-not-exist
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -759,14 +824,14 @@ fn symlink_to_file_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,1 +1,1 @@\n-target\n+content\n",
-                },
+                DiffHunk("@@ -1,1 +1,1 @@
+                -target
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -805,14 +870,14 @@ fn symlink_to_file_in_index() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,1 +1,1 @@\n-target\n+content\n",
-                },
+                DiffHunk("@@ -1,1 +1,1 @@
+                -target
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -872,28 +937,69 @@ fn added_modified_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,0 +1,1 @@\n+content\n",
-                },
+                DiffHunk("@@ -1,0 +1,1 @@
+                +content
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 0,
         },
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,1 +1,1 @@\n-something\n+change\n",
-                },
+                DiffHunk("@@ -1,1 +1,1 @@
+                -something
+                +change
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 1,
+        },
+    ]
+    "#);
+    Ok(())
+}
+
+#[test]
+fn non_utf8_decoding() -> Result<()> {
+    let repo = repo("non-utf8-encodings")?;
+    let actual = diff::worktree_changes(&repo)?;
+    // Let's have one sample file per codepage with reasonable amounts of text for inference.
+    insta::assert_debug_snapshot!(actual, @r#"
+    WorktreeChanges {
+        changes: [
+            TreeChange {
+                path: "windows1252",
+                status: Addition {
+                    state: ChangeState {
+                        id: Sha1(0000000000000000000000000000000000000000),
+                        kind: Blob,
+                    },
+                    is_untracked: true,
+                },
+            },
+        ],
+        ignored_changes: [],
+    }
+    "#);
+    insta::assert_debug_snapshot!(unified_diffs(actual, &repo)?, @r#"
+    [
+        Patch {
+            hunks: [
+                DiffHunk("@@ -1,0 +1,1 @@
+                +€ÄÀ
+                "),
+            ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 0,
         },
     ]
     "#);
@@ -929,14 +1035,14 @@ fn modified_in_index() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 1,
-                    diff: "@@ -1,1 +1,1 @@\n-something\n+change\n",
-                },
+                DiffHunk("@@ -1,1 +1,1 @@
+                -something
+                +change
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 1,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -967,14 +1073,13 @@ fn deleted_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 0,
-                    diff: "@@ -1,1 +1,0 @@\n-something\n",
-                },
+                DiffHunk("@@ -1,1 +1,0 @@
+                -something
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -1005,14 +1110,13 @@ fn deleted_in_index() -> Result<()> {
     [
         Patch {
             hunks: [
-                DiffHunk {
-                    old_start: 1,
-                    old_lines: 1,
-                    new_start: 1,
-                    new_lines: 0,
-                    diff: "@@ -1,1 +1,0 @@\n-something\n",
-                },
+                DiffHunk("@@ -1,1 +1,0 @@
+                -something
+                "),
             ],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 1,
         },
     ]
     "#);
@@ -1049,6 +1153,9 @@ fn renamed_in_index() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -1085,6 +1192,9 @@ fn renamed_in_index_with_executable_bit() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -1121,6 +1231,9 @@ fn renamed_in_worktree() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -1157,6 +1270,9 @@ fn renamed_in_worktree_with_executable_bit() -> Result<()> {
     [
         Patch {
             hunks: [],
+            is_result_of_binary_to_text_conversion: false,
+            lines_added: 0,
+            lines_removed: 0,
         },
     ]
     ");
@@ -1194,7 +1310,7 @@ fn modified_in_index_and_worktree_mod_mod() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
@@ -1251,7 +1367,7 @@ fn modified_in_index_and_worktree_mod_mod_symlink() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
@@ -1304,7 +1420,7 @@ fn modified_in_index_and_worktree_add_mod() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
@@ -1341,7 +1457,7 @@ fn modified_in_index_and_worktree_add_del() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
@@ -1382,7 +1498,7 @@ fn modified_in_index_and_worktree_del_add() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
@@ -1432,7 +1548,7 @@ fn modified_in_index_and_worktree_mod_del() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     // newlines at the end should work.
@@ -1445,7 +1561,6 @@ fn modified_in_index_and_worktree_mod_del() -> Result<()> {
 }
 
 #[test]
-#[ignore = "TBD later"]
 fn modified_in_index_and_worktree_rename_mod() -> Result<()> {
     let repo = repo("modified-in-index-and-worktree-rename-mod")?;
     let actual = diff::worktree_changes(&repo)?;
@@ -1453,10 +1568,11 @@ fn modified_in_index_and_worktree_rename_mod() -> Result<()> {
     WorktreeChanges {
         changes: [
             TreeChange {
-                path: "dual-modified",
-                status: Modification {
+                path: "file-renamed",
+                status: Rename {
+                    previous_path: "file",
                     previous_state: ChangeState {
-                        id: Sha1(8ea0713f9d637081cc0098035465c365c0c32949),
+                        id: Sha1(e79c5e8f964493290a409888d5413a737e8e5dd5),
                         kind: Blob,
                     },
                     state: ChangeState {
@@ -1469,27 +1585,25 @@ fn modified_in_index_and_worktree_rename_mod() -> Result<()> {
         ],
         ignored_changes: [
             IgnoredWorktreeChange {
-                path: "dual-modified",
+                path: "file-renamed",
                 status: TreeIndex,
             },
         ],
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
-    @@ -1,2 +1,3 @@
+    @@ -1,1 +1,2 @@
      initial
-     change
-    +second-change
+    +wt-change
     ");
     Ok(())
 }
 
 #[test]
-#[ignore = "TBD later"]
 fn modified_in_index_and_worktree_rename_rename() -> Result<()> {
     let repo = repo("modified-in-index-and-worktree-rename-rename")?;
     let actual = diff::worktree_changes(&repo)?;
@@ -1497,10 +1611,11 @@ fn modified_in_index_and_worktree_rename_rename() -> Result<()> {
     WorktreeChanges {
         changes: [
             TreeChange {
-                path: "dual-modified",
-                status: Modification {
+                path: "file-renamed-in-wt",
+                status: Rename {
+                    previous_path: "file",
                     previous_state: ChangeState {
-                        id: Sha1(8ea0713f9d637081cc0098035465c365c0c32949),
+                        id: Sha1(e79c5e8f964493290a409888d5413a737e8e5dd5),
                         kind: Blob,
                     },
                     state: ChangeState {
@@ -1513,27 +1628,25 @@ fn modified_in_index_and_worktree_rename_rename() -> Result<()> {
         ],
         ignored_changes: [
             IgnoredWorktreeChange {
-                path: "dual-modified",
+                path: "file-renamed-in-index",
                 status: TreeIndex,
             },
         ],
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
-    insta::assert_snapshot!(hunks[0].diff, @r"
-    @@ -1,2 +1,3 @@
-     initial
-     change
-    +second-change
-    ");
+    assert_eq!(
+        hunks.len(),
+        0,
+        "This is a rename without any additional change (but still a rename"
+    );
     Ok(())
 }
 
 #[test]
-#[ignore = "TBD later"]
 fn modified_in_index_and_worktree_rename_del() -> Result<()> {
     let repo = repo("modified-in-index-and-worktree-rename-del")?;
     let actual = diff::worktree_changes(&repo)?;
@@ -1541,37 +1654,30 @@ fn modified_in_index_and_worktree_rename_del() -> Result<()> {
     WorktreeChanges {
         changes: [
             TreeChange {
-                path: "dual-modified",
-                status: Modification {
+                path: "file",
+                status: Deletion {
                     previous_state: ChangeState {
-                        id: Sha1(8ea0713f9d637081cc0098035465c365c0c32949),
+                        id: Sha1(e79c5e8f964493290a409888d5413a737e8e5dd5),
                         kind: Blob,
                     },
-                    state: ChangeState {
-                        id: Sha1(0000000000000000000000000000000000000000),
-                        kind: Blob,
-                    },
-                    flags: None,
                 },
             },
         ],
         ignored_changes: [
             IgnoredWorktreeChange {
-                path: "dual-modified",
+                path: "file-renamed-in-index",
                 status: TreeIndex,
             },
         ],
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
-    @@ -1,2 +1,3 @@
-     initial
-     change
-    +second-change
+    @@ -1,1 +1,0 @@
+    -initial
     ");
     Ok(())
 }
@@ -1608,7 +1714,7 @@ fn modified_in_index_and_worktree_mod_rename() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     insta::assert_snapshot!(hunks[0].diff, @r"
@@ -1621,7 +1727,6 @@ fn modified_in_index_and_worktree_mod_rename() -> Result<()> {
 }
 
 #[test]
-#[ignore = "TBD later"]
 fn modified_in_index_and_worktree_rename_add() -> Result<()> {
     let repo = repo("modified-in-index-and-worktree-rename-add")?;
     let actual = diff::worktree_changes(&repo)?;
@@ -1630,17 +1735,22 @@ fn modified_in_index_and_worktree_rename_add() -> Result<()> {
         changes: [
             TreeChange {
                 path: "file-renamed-in-index",
-                status: Rename {
-                    previous_path: "file",
-                    previous_state: ChangeState {
-                        id: Sha1(0000000000000000000000000000000000000000),
-                        kind: Blob,
-                    },
+                status: Addition {
                     state: ChangeState {
                         id: Sha1(e79c5e8f964493290a409888d5413a737e8e5dd5),
                         kind: Blob,
                     },
-                    flags: None,
+                    is_untracked: true,
+                },
+            },
+            TreeChange {
+                path: "file",
+                status: Addition {
+                    state: ChangeState {
+                        id: Sha1(0000000000000000000000000000000000000000),
+                        kind: Blob,
+                    },
+                    is_untracked: true,
                 },
             },
         ],
@@ -1649,16 +1759,33 @@ fn modified_in_index_and_worktree_rename_add() -> Result<()> {
                 path: "file-renamed-in-index",
                 status: TreeIndex,
             },
+            IgnoredWorktreeChange {
+                path: "file",
+                status: TreeIndex,
+            },
         ],
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [
+        UnifiedDiff::Patch {
+            hunks: ref hunks1, ..
+        },
+        UnifiedDiff::Patch {
+            hunks: ref hunks2, ..
+        },
+    ] = unified_diffs(actual, &repo)?[..]
+    else {
         unreachable!("need hunks")
     };
-    insta::assert_snapshot!(hunks[0].diff, @r"
+    insta::assert_snapshot!(hunks1[0].diff, @r"
     @@ -1,0 +1,1 @@
     +initial
+    ");
+    insta::assert_snapshot!(hunks2[0].diff, @r"
+    @@ -1,0 +1,2 @@
+    +initial
+    +wt-change
     ");
     Ok(())
 }
@@ -1695,7 +1822,7 @@ fn modified_in_index_and_worktree_add_rename() -> Result<()> {
     }
     "#);
 
-    let [UnifiedDiff::Patch { ref hunks }] = unified_diffs(actual, &repo)?[..] else {
+    let [UnifiedDiff::Patch { ref hunks, .. }] = unified_diffs(actual, &repo)?[..] else {
         unreachable!("need hunks")
     };
     assert_eq!(
@@ -1710,15 +1837,11 @@ fn unified_diffs(
     worktree: WorktreeChanges,
     repo: &gix::Repository,
 ) -> anyhow::Result<Vec<UnifiedDiff>> {
-    worktree
-        .changes
-        .into_iter()
-        .map(|c| c.unified_diff(repo, 3))
-        .collect()
+    super::unified_diffs(worktree.changes, repo)
 }
 
 pub fn repo_in(fixture_name: &str, name: &str) -> anyhow::Result<gix::Repository> {
-    let root = gix_testtools::scripted_fixture_read_only(format!("{}.sh", fixture_name))
+    let root = gix_testtools::scripted_fixture_read_only(format!("{fixture_name}.sh"))
         .map_err(anyhow::Error::from_boxed)?;
     let worktree_root = root.join(name);
     Ok(gix::open_opts(

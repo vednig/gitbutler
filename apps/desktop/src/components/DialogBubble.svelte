@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { MessageRole } from '$lib/ai/types';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import Markdown from '@gitbutler/ui/markdown/Markdown.svelte';
+	import { Button, Icon, Textarea, Markdown } from '@gitbutler/ui';
 
 	interface Props {
 		role: MessageRole;
@@ -50,7 +47,7 @@
 		{#if editing}
 			<div class="textarea" class:is-error={isError}>
 				<Textarea
-					unstyled
+					borderless
 					bind:value={promptMessage}
 					oninput={(e: Event) => {
 						const target = e.currentTarget as HTMLTextAreaElement;
@@ -120,8 +117,8 @@
 	.bubble__header {
 		display: flex;
 		align-items: center;
-		gap: 8px;
 		padding: 12px;
+		gap: 8px;
 		/* border: 1px solid var(--clr-border-2); */
 
 		border-bottom: none;
@@ -129,13 +126,13 @@
 	}
 
 	.bubble-message {
+		padding: 12px;
 		overflow-x: auto;
-		color: var(--clr-text-1);
 		border-top: 1px solid var(--clr-border-2);
 		/* border: 1px solid var(--clr-border-2); */
 
 		border-radius: 0 0 var(--radius-l) var(--radius-l);
-		padding: 12px;
+		color: var(--clr-text-1);
 	}
 
 	.bubble-actions {
@@ -148,9 +145,9 @@
 
 	.textarea {
 		width: 100%;
-		background-color: var(--clr-bg-1);
 		border: 1px solid var(--clr-border-2);
 		border-radius: 0 0 var(--radius-l) var(--radius-l);
+		background-color: var(--clr-bg-1);
 		transition:
 			background-color var(--transition-fast),
 			border-color var(--transition-fast);

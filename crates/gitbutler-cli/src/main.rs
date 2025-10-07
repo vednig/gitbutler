@@ -1,9 +1,11 @@
-use anyhow::Result;
+use std::path::PathBuf;
+
+use anyhow::{bail, Context, Result};
 
 mod args;
 use args::Args;
 
-use crate::args::{project, snapshot, vbranch};
+use crate::args::{project, vbranch};
 
 mod command;
 
@@ -20,14 +22,6 @@ fn main() -> Result<()> {
         args::Subcommands::IntegrateUpstream { mode } => {
             let project = command::prepare::project_from_path(args.current_dir)?;
             command::workspace::update(project, mode)
-        }
-        args::Subcommands::UnapplyOwnership {
-            filepath,
-            from_line,
-            to_line,
-        } => {
-            let project = command::prepare::project_from_path(args.current_dir)?;
-            command::ownership::unapply(project, filepath, from_line, to_line)
         }
         args::Subcommands::Branch(vbranch::Platform { cmd }) => {
             let project = command::prepare::project_from_path(args.current_dir)?;
@@ -77,28 +71,41 @@ fn main() -> Result<()> {
             Some(project::SubCommands::Add {
                 switch_to_workspace,
                 path,
-            }) => {
-                let ctrl = command::prepare::project_controller(app_suffix, app_data_dir)?;
-                command::project::add(ctrl, path, switch_to_workspace)
-            }
-            None => {
-                let ctrl = command::prepare::project_controller(app_suffix, app_data_dir)?;
-                command::project::list(ctrl)
-            }
+            }) => command::project::add(
+                data_dir(app_suffix, app_data_dir)?,
+                path,
+                switch_to_workspace,
+            ),
+            None => command::project::list(),
         },
-        args::Subcommands::Snapshot(snapshot::Platform { cmd }) => {
-            let project = command::prepare::project_from_path(args.current_dir)?;
-            match cmd {
-                Some(snapshot::SubCommands::Restore { snapshot_id }) => {
-                    command::snapshot::restore(project, snapshot_id)
-                }
-                Some(snapshot::SubCommands::Diff { snapshot_id }) => {
-                    command::snapshot::diff(project, snapshot_id)
-                }
-                None => command::snapshot::list(project),
-            }
-        }
     }
+}
+pub fn data_dir(
+    app_suffix: Option<String>,
+    app_data_dir: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
+    let path = if let Some(dir) = app_data_dir {
+        std::fs::create_dir_all(&dir).context("Failed to assure the designated data-dir exists")?;
+        dir
+    } else {
+        dirs_next::data_dir()
+            .map(|dir| {
+                dir.join(format!(
+                    "com.gitbutler.app{}",
+                    app_suffix
+                        .map(|mut suffix| {
+                            suffix.insert(0, '.');
+                            suffix
+                        })
+                        .unwrap_or_default()
+                ))
+            })
+            .context("no data-directory available on this platform")?
+    };
+    if !path.is_dir() {
+        bail!("Path '{}' must be a valid directory", path.display());
+    }
+    Ok(path)
 }
 
 mod trace {

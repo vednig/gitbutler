@@ -1,13 +1,9 @@
 <script lang="ts">
-	import { SshKeyService } from '$lib/sshKeyService';
-	import { getContext } from '@gitbutler/shared/context';
-	import AsyncButton from '@gitbutler/ui/AsyncButton.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
+	import { SSH_KEY_SERVICE } from '$lib/sshKeyService';
+	import { inject } from '@gitbutler/core/context';
+	import { AsyncButton, Button, Modal, Textarea, Textbox } from '@gitbutler/ui';
 
-	const sshKeyService = getContext(SshKeyService);
+	const sshKeyService = inject(SSH_KEY_SERVICE);
 	let name = $state('');
 	let publicKey = $state('');
 	let error = $state<string | null>(null);
@@ -45,33 +41,26 @@
 </script>
 
 <Modal bind:this={modal} {onClose} title="Add SSH Key">
-	{#snippet children()}
-		<div class="container">
-			<p class="description">
-				Add a new SSH key to your account. You can find your public key in your SSH key file
-				(usually ending in .pub).
-			</p>
+	<div class="container">
+		<p class="description">
+			Add a new SSH key to your account. You can find your public key in your SSH key file (usually
+			ending in .pub).
+		</p>
 
-			<Textbox
-				label="Key name"
-				placeholder="e.g., MacBook Pro"
-				bind:value={name}
-				required={false}
-			/>
+		<Textbox label="Key name" placeholder="e.g., MacBook Pro" bind:value={name} required={false} />
 
-			<Textarea
-				label="Public Key"
-				placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADA..."
-				bind:value={publicKey}
-				minRows={6}
-				required={false}
-			/>
+		<Textarea
+			label="Public Key"
+			placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADA..."
+			bind:value={publicKey}
+			minRows={6}
+			required={false}
+		/>
 
-			{#if error}
-				<div class="error-key">{error}</div>
-			{/if}
-		</div>
-	{/snippet}
+		{#if error}
+			<div class="error-key">{error}</div>
+		{/if}
+	</div>
 
 	{#snippet controls()}
 		<Button onclick={() => modal?.close()} kind="outline">Cancel</Button>

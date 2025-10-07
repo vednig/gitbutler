@@ -1,21 +1,66 @@
 <script lang="ts">
 	import { formatDate } from '$lib/utils/formatDate';
-	import GhostContentAPI, { type PostsOrPages } from '@tryghost/content-api';
 
-	const GHOST_URL = 'https://gitbutler.ghost.io';
-	const GHOST_KEY = '80bbdca8b933f3d98780c7cc1b';
-	const GHOST_VERSION = 'v5.0';
-	let posts = $state<PostsOrPages>();
+	interface BlogPost {
+		title: string;
+		url: string;
+		feature_image: string;
+		published_at: string;
+		custom_excerpt: string;
+		primary_author: {
+			name: string;
+		};
+	}
+
+	let posts = $state<BlogPost[]>([]);
+
+	async function fetchRSSFeed() {
+		try {
+			const response = await fetch('https://blog.gitbutler.com/rss/3');
+			const text = await response.text();
+			const parser = new DOMParser();
+			const xml = parser.parseFromString(text, 'text/xml');
+			const items = xml.querySelectorAll('item');
+
+			const parsedPosts: BlogPost[] = [];
+			items.forEach((item) => {
+				const title = item.querySelector('title')?.textContent || '';
+				const url = item.querySelector('link')?.textContent || '';
+				const pubDate = item.querySelector('pubDate')?.textContent || '';
+				const description = item.querySelector('description')?.textContent || '';
+
+				// Extract author from the author tag with format "email (Name)"
+				const authorText = item.querySelector('author')?.textContent || '';
+				const authorMatch = authorText.match(/\(([^)]+)\)/);
+				const creator = authorMatch ? authorMatch[1] : 'GitButler Team';
+
+				// Extract image from enclosure tag
+				const enclosure = item.querySelector('enclosure');
+				const feature_image =
+					enclosure?.getAttribute('url') ||
+					'https://blog.gitbutler.com/content/images/2023/10/gitbutler-og.png';
+
+				// Extract excerpt from description, removing HTML tags
+				const custom_excerpt = description.replace(/<[^>]*>/g, '').substring(0, 200) + '...';
+
+				parsedPosts.push({
+					title,
+					url,
+					feature_image,
+					published_at: pubDate,
+					custom_excerpt,
+					primary_author: { name: creator }
+				});
+			});
+
+			posts = parsedPosts;
+		} catch (error) {
+			console.error('Failed to fetch RSS feed:', error);
+		}
+	}
 
 	$effect(() => {
-		const api = GhostContentAPI({
-			url: GHOST_URL,
-			key: GHOST_KEY,
-			version: GHOST_VERSION
-		});
-		api.posts.browse({ limit: 3, include: 'authors' }).then((data) => {
-			posts = data;
-		});
+		fetchRSSFeed();
 	});
 </script>
 
@@ -76,12 +121,12 @@
 	}
 
 	.title {
-		font-family: 'PP Editorial New', serif;
+		margin-bottom: 16px;
+		color: var(--clr-black);
 		font-weight: 400;
 		font-size: 64px;
-		color: var(--clr-black);
 		line-height: 90%;
-		margin-bottom: 16px;
+		font-family: var(--fontfamily-accent);
 
 		@media (max-width: 800px) {
 			font-size: 52px;
@@ -89,14 +134,14 @@
 	}
 
 	.caption {
-		font-size: 22px;
+		max-width: 400px;
+		margin-bottom: 30px;
 		color: var(--clr-black);
 		font-weight: 400;
+		font-size: 22px;
 		line-height: 130%;
-		opacity: 0.7;
-		max-width: 400px;
 		text-wrap: balance;
-		margin-bottom: 30px;
+		opacity: 0.7;
 
 		@media (max-width: 800px) {
 			font-size: 18px;
@@ -104,14 +149,14 @@
 	}
 
 	.posts-left {
-		flex: 4.5;
 		display: flex;
+		flex: 4.5;
 		flex-direction: column;
 	}
 
 	.posts-right {
-		flex: 3.5;
 		display: flex;
+		flex: 3.5;
 		flex-direction: column;
 		justify-content: flex-end;
 		gap: 40px;
@@ -122,29 +167,29 @@
 	}
 
 	.post-title {
+		margin-bottom: 8px;
+		color: var(--clr-black);
 		font-weight: 500;
 		font-size: 24px;
-		color: var(--clr-black);
 		line-height: 110%;
-		margin-bottom: 8px;
-		text-wrap: balance;
-		text-transform: uppercase;
 		text-decoration: underline;
+		text-transform: uppercase;
+		text-wrap: balance;
 		transition:
 			color 0.1s ease-in-out,
 			filter 0.1s ease-in-out;
 	}
 
 	.post-title-caption {
-		font-family: 'PP Editorial New', serif;
-		font-size: 16px;
 		color: var(--clr-black);
+		font-size: 16px;
+		font-family: var(--fontfamily-accent);
 		opacity: 0.4;
 	}
 
 	.post-caption {
-		font-size: 15px;
 		color: var(--clr-black);
+		font-size: 15px;
 		line-height: 140%;
 		opacity: 0.8;
 	}
@@ -152,13 +197,13 @@
 	// Main post
 
 	.main-post {
-		cursor: pointer;
 		display: flex;
 		flex-direction: column;
-		border-radius: 16px;
 		overflow: hidden;
 		border: 1px solid var(--clr-gray);
+		border-radius: 16px;
 		text-decoration: none;
+		cursor: pointer;
 		transition:
 			transform 0.1s ease-in-out,
 			background-color 0.1s ease-in-out;
@@ -180,8 +225,8 @@
 
 	.main-post__content {
 		display: flex;
-		gap: 20px;
 		padding: 30px;
+		gap: 20px;
 
 		@media (max-width: 1300px) {
 			flex-direction: column;
@@ -193,8 +238,8 @@
 	}
 
 	.main-post__content__title-wrap {
-		flex: 2;
 		display: flex;
+		flex: 2;
 		flex-direction: column;
 	}
 
@@ -213,11 +258,11 @@
 
 	// Secondary post
 	.secondary-post {
-		cursor: pointer;
 		display: flex;
 		flex-direction: column;
 		gap: 20px;
 		text-decoration: none;
+		cursor: pointer;
 
 		&:hover {
 			.secondary-post__image {
@@ -240,8 +285,8 @@
 	.secondary-post__image {
 		width: 100%;
 		height: 240px;
-		border-radius: 16px;
 		object-fit: cover;
+		border-radius: 16px;
 		// filter: saturate(0.8);
 		transition: filter 0.1s ease-in-out;
 	}

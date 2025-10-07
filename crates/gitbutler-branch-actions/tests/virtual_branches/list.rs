@@ -13,7 +13,7 @@ fn one_vbranch_in_workspace() -> Result<()> {
             identity: "virtual".into(),
             virtual_branch_given_name: Some("virtual"),
             virtual_branch_in_workspace: true,
-            has_local: false,
+            has_local: true,
             ..Default::default()
         },
         "It's a bare virtual branch with no commit",
@@ -34,7 +34,7 @@ fn one_vbranch_in_workspace_one_commit() -> Result<()> {
             identity: "virtual".into(),
             virtual_branch_given_name: Some("virtual"),
             virtual_branch_in_workspace: true,
-            has_local: false,
+            has_local: true,
             ..Default::default()
         },
         "It's a bare virtual branch with a single commit",
@@ -45,7 +45,7 @@ fn one_vbranch_in_workspace_one_commit() -> Result<()> {
 #[test]
 fn two_vbranches_in_workspace_one_commit() -> Result<()> {
     init_env();
-    let ctx = project_ctx("two-vbranches-in-workspace-one-applied")?;
+    let ctx = project_ctx_without_ws3("two-vbranches-in-workspace-one-applied")?;
     let list = list_branches(
         &ctx,
         Some(BranchListingFilter {
@@ -60,7 +60,7 @@ fn two_vbranches_in_workspace_one_commit() -> Result<()> {
             identity: "other".into(),
             virtual_branch_given_name: Some("other"),
             virtual_branch_in_workspace: true,
-            has_local: false,
+            has_local: true,
             ..Default::default()
         },
         "It's a bare virtual branch without any branches with the same identity",
@@ -75,17 +75,10 @@ fn two_vbranches_in_workspace_one_commit() -> Result<()> {
     )?;
     assert_eq!(list.len(), 1, "only one of these is *not* applied");
 
-    let virtual_branch_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
-    let unapplied = virtual_branch_state.list_all_stacks().unwrap();
-    let unapplied = unapplied
-        .iter()
-        .find(|stack| stack.name == "virtual")
-        .unwrap();
-
     assert_equal(
         &list[0],
         ExpectedBranchListing {
-            identity: (unapplied.source_refname.as_ref().unwrap().branch().unwrap()).into(),
+            identity: "virtual".into(),
             virtual_branch_given_name: Some("virtual"),
             virtual_branch_in_workspace: false,
             has_local: true,
@@ -99,7 +92,7 @@ fn two_vbranches_in_workspace_one_commit() -> Result<()> {
 #[test]
 fn one_feature_branch_and_one_vbranch_in_workspace_one_commit() -> Result<()> {
     init_env();
-    let ctx = project_ctx("a-vbranch-named-like-target-branch-short-name")?;
+    let ctx = project_ctx_without_ws3("a-vbranch-named-like-target-branch-short-name")?;
     let list = list_branches(&ctx, None)?;
     assert_eq!(
         list.len(),
@@ -125,7 +118,7 @@ fn one_feature_branch_and_one_vbranch_in_workspace_one_commit() -> Result<()> {
 #[test]
 fn one_branch_in_workspace_multiple_remotes() -> Result<()> {
     init_env();
-    let ctx = project_ctx("one-vbranch-in-workspace-two-remotes")?;
+    let ctx = project_ctx_without_ws3("one-vbranch-in-workspace-two-remotes")?;
     let list = list_branches(&ctx, None)?;
     assert_eq!(list.len(), 1, "a single virtual branch");
 
@@ -145,6 +138,8 @@ fn one_branch_in_workspace_multiple_remotes() -> Result<()> {
 
 mod util {
     use anyhow::Result;
+    use but_settings::app_settings::FeatureFlags;
+    use but_settings::AppSettings;
     use gitbutler_branch::BranchIdentity;
     use gitbutler_branch_actions::{BranchListing, BranchListingFilter};
     use gitbutler_command_context::CommandContext;
@@ -175,7 +170,7 @@ mod util {
         BranchListing {
             name,
             remotes,
-            virtual_branch,
+            stack: virtual_branch,
             updated_at: _,
             head: _, // NOTE: can't have stable commits while `gitbutler-change-id` is not stable/is a UUID.
             last_commiter: _,
@@ -228,6 +223,17 @@ mod util {
         gitbutler_testsupport::read_only::fixture("for-listing.sh", name)
     }
 
+    pub fn project_ctx_without_ws3(name: &str) -> Result<CommandContext> {
+        gitbutler_testsupport::read_only::fixture_with_features(
+            "for-listing.sh",
+            name,
+            FeatureFlags {
+                ws3: false,
+                ..AppSettings::default().feature_flags
+            },
+        )
+    }
+
     pub fn list_branches(
         ctx: &CommandContext,
         filter: Option<BranchListingFilter>,
@@ -237,5 +243,5 @@ mod util {
         Ok(branches)
     }
 }
-use gitbutler_stack::VirtualBranchesHandle;
+use crate::virtual_branches::list::util::project_ctx_without_ws3;
 pub use util::{assert_equal, init_env, list_branches, project_ctx, ExpectedBranchListing};

@@ -1,16 +1,14 @@
 <script lang="ts">
-	import { WebState } from '$lib/redux/store.svelte';
-	import { getContext } from '@gitbutler/shared/context';
+	import { WEB_STATE } from '$lib/redux/store.svelte';
+	import { inject } from '@gitbutler/core/context';
 	import RegisterInterest from '@gitbutler/shared/interest/RegisterInterest.svelte';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
+	import { ORGANIZATION_SERVICE } from '@gitbutler/shared/organizations/organizationService';
 	import { getOrganizations } from '@gitbutler/shared/organizations/organizationsPreview.svelte';
-	import { ProjectService } from '@gitbutler/shared/organizations/projectService';
+	import { PROJECT_SERVICE } from '@gitbutler/shared/organizations/projectService';
 	import { projectTable } from '@gitbutler/shared/organizations/projectsSlice';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import toasts from '@gitbutler/ui/toasts';
+
+	import { Button, Modal, SectionCard, chipToasts } from '@gitbutler/ui';
 	import type { Project } from '@gitbutler/shared/organizations/types';
 
 	type Props = {
@@ -19,9 +17,9 @@
 
 	const { projectRepositoryId }: Props = $props();
 
-	const webState = getContext(WebState);
-	const organizationService = getContext(OrganizationService);
-	const projectService = getContext(ProjectService);
+	const webState = inject(WEB_STATE);
+	const organizationService = inject(ORGANIZATION_SERVICE);
+	const projectService = inject(PROJECT_SERVICE);
 
 	const projectInterest = $derived(projectService.getProjectInterest(projectRepositoryId));
 	const project = $derived(
@@ -68,7 +66,7 @@
 			}
 		} catch (error) {
 			console.error('Failed to fetch organization projects:', error);
-			toasts.error('Failed to fetch organization projects');
+			chipToasts.error('Failed to fetch organization projects');
 			organizationProjects = [];
 		} finally {
 			isLoadingProjects = false;
@@ -101,7 +99,7 @@
 		const projectSlug = isCreatingNew ? newProjectSlug : selectedProjectSlug;
 
 		if (!projectSlug) {
-			toasts.error('Please select or create a project first');
+			chipToasts.error('Please select or create a project first');
 			return;
 		}
 
@@ -111,10 +109,10 @@
 				organizationSlug,
 				projectSlug
 			);
-			toasts.success('Project connected to organization');
+			chipToasts.success('Project connected to organization');
 			modal?.close();
 		} catch (error) {
-			toasts.error(
+			chipToasts.error(
 				`Failed to connect project: ${error instanceof Error ? error.message : 'Unknown error'}`
 			);
 		}
@@ -183,8 +181,7 @@
 		<!-- Project Selection Step -->
 		<div class="selection-header">
 			<h4>Select a project in {selectedOrgSlug}</h4>
-			<Button style="secondary" onclick={() => (selectedOrgSlug = null)}
-				>Back to Organizations</Button
+			<Button style="neutral" onclick={() => (selectedOrgSlug = null)}>Back to Organizations</Button
 			>
 		</div>
 
@@ -285,34 +282,34 @@
 	}
 
 	.description {
+		margin-top: 4px;
 		color: var(--text-muted, #666);
 		font-size: 0.9rem;
-		margin-top: 4px;
 	}
 
 	.slug {
+		margin-top: 2px;
 		color: var(--text-muted, #666);
 		font-size: 0.8rem;
-		margin-top: 2px;
 	}
 
 	.empty-state {
-		text-align: center;
 		padding: 24px 0;
 		color: var(--text-muted, #666);
+		text-align: center;
 	}
 
 	.selection-header {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		justify-content: space-between;
 		margin-bottom: 16px;
 	}
 
 	.loading-container {
-		text-align: center;
 		padding: 32px 0;
 		color: var(--text-muted, #666);
+		text-align: center;
 	}
 
 	.selected {
@@ -321,9 +318,9 @@
 	}
 
 	.action-buttons {
-		margin-top: 20px;
 		display: flex;
 		justify-content: flex-end;
+		margin-top: 20px;
 	}
 
 	.radio-option {
@@ -334,9 +331,9 @@
 	}
 
 	.new-project-form {
-		margin-top: 10px;
 		display: flex;
 		flex-direction: column;
+		margin-top: 10px;
 		gap: 6px;
 	}
 
@@ -348,7 +345,7 @@
 	}
 
 	.create-new {
-		border-style: dashed;
 		border-width: 1px;
+		border-style: dashed;
 	}
 </style>

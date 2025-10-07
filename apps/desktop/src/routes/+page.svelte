@@ -1,16 +1,12 @@
 <script lang="ts">
-	import FullviewLoading from '$components/FullviewLoading.svelte';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { getContext } from '@gitbutler/shared/context';
-	import { derived as derivedStore } from 'svelte/store';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import FullviewLoading from '$components/FullviewLoading.svelte';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { inject } from '@gitbutler/core/context';
 
-	const projectsService = getContext(ProjectsService);
+	const projectsService = inject(PROJECTS_SERVICE);
 
-	const projects = projectsService.projects;
-
-	const debug = $derived($page.url.searchParams.get('debug'));
+	const projectsQuery = projectsService.projects();
 
 	type Redirect =
 		| {
@@ -22,32 +18,28 @@
 		  };
 
 	const persistedId = projectsService.getLastOpenedProject();
-	const redirect = derivedStore(
-		projects,
-		(projects): Redirect => {
-			if (debug) return { type: 'no-projects' };
-			if (!projects) return { type: 'loading' };
-			const projectId = projects.find((p) => p.id === persistedId)?.id;
-			if (projectId) {
-				return { type: 'redirect', subject: `/${projectId}` };
-			}
-			if (projects.length > 0) {
-				return { type: 'redirect', subject: `/${projects[0]?.id}` };
-			}
-			return { type: 'no-projects' };
-		},
-		{ type: 'loading' } as Redirect
-	);
+	const redirect: Redirect = $derived.by(() => {
+		const projects = projectsQuery.response;
+		if (projects === undefined) return { type: 'loading' };
+		const projectId = projects.find((p) => p.id === persistedId)?.id;
+		if (projectId) {
+			return { type: 'redirect', subject: `/${projectId}` };
+		}
+		if (projects.length > 0) {
+			return { type: 'redirect', subject: `/${projects[0]?.id}` };
+		}
+		return { type: 'no-projects' };
+	});
 
 	$effect(() => {
-		if ($redirect.type === 'redirect') {
-			goto($redirect.subject);
-		} else if ($redirect.type === 'no-projects') {
+		if (redirect.type === 'redirect') {
+			goto(redirect.subject);
+		} else if (redirect.type === 'no-projects') {
 			goto('/onboarding');
 		}
 	});
 </script>
 
-{#if $redirect.type === 'loading'}
+{#if redirect.type === 'loading'}
 	<FullviewLoading />
 {/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Spacer from '@gitbutler/ui/Spacer.svelte';
+	import { Spacer } from '@gitbutler/ui';
 	import { pxToRem } from '@gitbutler/ui/utils/pxToRem';
 	import type { Snippet } from 'svelte';
 
@@ -15,7 +15,7 @@
 	const { spacer = false, gap = 16, top, title, description, children }: Props = $props();
 </script>
 
-<div class="settings-section" style="gap: {pxToRem(gap)}">
+<div class="settings-section" style="gap: {pxToRem(gap)}rem">
 	{#if top}
 		{@render top?.()}
 	{/if}

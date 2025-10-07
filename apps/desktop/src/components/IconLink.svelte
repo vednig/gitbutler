@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { openExternalUrl } from '$lib/utils/url';
-	import Icon from '@gitbutler/ui/Icon.svelte';
+	import { URL_SERVICE } from '$lib/utils/url';
+	import { inject } from '@gitbutler/core/context';
+	import { Icon } from '@gitbutler/ui';
 	import type iconsJson from '@gitbutler/ui/data/icons.json';
 	import type { Snippet } from 'svelte';
 
@@ -11,9 +12,10 @@
 	}
 
 	const { href, icon, children }: Props = $props();
+	const urlService = inject(URL_SERVICE);
 </script>
 
-<button type="button" class="link" onclick={async () => await openExternalUrl(href)}>
+<button type="button" class="link" onclick={async () => await urlService.openExternalUrl(href)}>
 	<Icon name={icon} />
 	<span class="text-12">
 		{@render children()}
@@ -25,8 +27,8 @@
 		display: flex;
 		align-items: center;
 		width: fit-content;
-		gap: 10px;
 		padding: 4px 6px;
+		gap: 10px;
 		border-radius: var(--radius-m);
 
 		color: var(--clr-scale-ntrl-40);
@@ -35,8 +37,8 @@
 		transition: background-color var(--transition-fast);
 
 		&:hover {
-			color: var(--clr-text-1);
 			background-color: oklch(from var(--clr-scale-ntrl-0) l c h / 0.05);
+			color: var(--clr-text-1);
 		}
 	}
 </style>

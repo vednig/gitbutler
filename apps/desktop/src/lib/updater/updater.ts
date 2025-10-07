@@ -1,9 +1,19 @@
 import { showToast } from '$lib/notifications/toasts';
-import { relaunch } from '@tauri-apps/plugin-process';
-import { type DownloadEvent, Update } from '@tauri-apps/plugin-updater';
-import { writable } from 'svelte/store';
+import { InjectionToken } from '@gitbutler/core/context';
+import { persisted } from '@gitbutler/shared/persisted';
+import { get, writable } from 'svelte/store';
 import type { PostHogWrapper } from '$lib/analytics/posthog';
-import type { Tauri } from '$lib/backend/tauri';
+import type {
+	DownloadEvent,
+	DownloadEventName,
+	DownloadUpdate,
+	IBackend,
+	InstallUpdate,
+	Update
+} from '$lib/backend';
+import type { ShortcutService } from '$lib/shortcuts/shortcutService';
+
+export const UPDATER_SERVICE = new InjectionToken<UpdaterService>('UpdaterService');
 
 type UpdateStatus = {
 	version?: string;
@@ -20,7 +30,7 @@ export type InstallStatus =
 	| 'Up-to-date'
 	| 'Error';
 
-const downloadStatusMap: { [K in DownloadEvent['event']]: InstallStatus } = {
+const downloadStatusMap: { [K in DownloadEventName]: InstallStatus } = {
 	Started: 'Downloading',
 	Progress: 'Downloading',
 	Finished: 'Downloaded'
@@ -37,6 +47,7 @@ export const UPDATE_INTERVAL_MS = 3600000; // Hourly
  * ./scripts/release.sh --channel nightly --version "0.5.678"
  */
 export class UpdaterService {
+	readonly disableAutoChecks = persisted(false, 'disableAutoUpdateChecks');
 	readonly loading = writable(false);
 	readonly update = writable<UpdateStatus>({}, () => {
 		this.start();
@@ -45,40 +56,52 @@ export class UpdaterService {
 		};
 	});
 
-	private intervalId: any;
+	private manualCheck = false;
+	private checkForUpdateInterval: ReturnType<typeof setInterval> | undefined;
 	private seenVersion: string | undefined;
-	private tauriDownload: Update['download'] | undefined;
-	private tauriInstall: Update['install'] | undefined;
+	private backendDownload: DownloadUpdate | undefined;
+	private backendInstall: InstallUpdate | undefined;
 
 	unlistenStatus?: () => void;
 	unlistenMenu?: () => void;
 
 	constructor(
-		private tauri: Tauri,
-		private posthog: PostHogWrapper
+		private backend: IBackend,
+		private posthog: PostHogWrapper,
+		private shortcuts: ShortcutService
 	) {}
 
 	private async start() {
-		this.unlistenMenu = this.tauri.listen<string>('menu://global/update/clicked', () => {
+		// This shortcut registration is never unsubscribed, but that's likely
+		// fine for the time being since the `AppUpdater` can never unmount.
+		this.shortcuts.on('update', () => {
 			this.checkForUpdate(true);
 		});
-		setInterval(async () => await this.checkForUpdate(), UPDATE_INTERVAL_MS);
+		this.checkForUpdateInterval = setInterval(
+			async () => await this.checkForUpdate(),
+			UPDATE_INTERVAL_MS
+		);
 		this.checkForUpdate();
 	}
 
 	private async stop() {
 		this.unlistenStatus?.();
-		this.unlistenMenu?.();
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-			this.intervalId = undefined;
+		if (this.checkForUpdateInterval !== undefined) {
+			clearInterval(this.checkForUpdateInterval);
+			this.checkForUpdateInterval = undefined;
 		}
 	}
 
 	async checkForUpdate(manual = false) {
+		if (get(this.disableAutoChecks)) return;
+
+		if (manual) {
+			this.manualCheck = manual;
+		}
+
 		this.loading.set(true);
 		try {
-			this.handleUpdate(await this.tauri.checkUpdate(), manual); // In DEV mode this never returns.
+			this.handleUpdate(await this.backend.checkUpdate()); // In DEV mode this never returns.
 		} catch (err: unknown) {
 			handleError(err, manual);
 		} finally {
@@ -86,25 +109,28 @@ export class UpdaterService {
 		}
 	}
 
-	private handleUpdate(update: Update | null, manual: boolean) {
+	private handleUpdate(update: Update | null) {
 		if (update === null) {
+			if (this.manualCheck) {
+				this.setStatus('Up-to-date');
+				return;
+			}
+
 			this.update.set({});
 			return;
 		}
-		if (!update.available && manual) {
-			this.setStatus('Up-to-date');
-		} else if (
-			update.available &&
+
+		if (
 			update.version !== this.seenVersion &&
 			update.currentVersion !== '0.0.0' // DEV mode.
 		) {
-			const { version, body, download, install } = update;
-			this.tauriDownload = download.bind(update);
-			this.tauriInstall = install.bind(update);
-			this.seenVersion = version;
+			this.backendDownload = async (onEvent) => await update.download(onEvent);
+			this.backendInstall = async () => await update.install();
+
+			this.seenVersion = update.version;
 			this.update.set({
-				version,
-				releaseNotes: body,
+				version: update.version,
+				releaseNotes: update.body,
 				status: undefined
 			});
 		}
@@ -127,22 +153,22 @@ export class UpdaterService {
 	}
 
 	private async download() {
-		if (!this.tauriDownload) {
+		if (!this.backendDownload) {
 			throw new Error('Download function not available.');
 		}
 		this.setStatus('Downloading');
-		await this.tauriDownload((progress: DownloadEvent) => {
+		await this.backendDownload((progress: DownloadEvent) => {
 			this.setStatus(downloadStatusMap[progress.event]);
 		});
 		this.setStatus('Downloaded');
 	}
 
 	private async install() {
-		if (!this.tauriInstall) {
+		if (!this.backendInstall) {
 			throw new Error('Install function not available.');
 		}
 		this.setStatus('Installing');
-		await this.tauriInstall();
+		await this.backendInstall();
 		this.setStatus('Done');
 	}
 
@@ -154,7 +180,7 @@ export class UpdaterService {
 
 	async relaunchApp() {
 		try {
-			await relaunch();
+			await this.backend.relaunch();
 		} catch (err: unknown) {
 			handleError(err, true);
 		}
@@ -162,13 +188,16 @@ export class UpdaterService {
 
 	dismiss() {
 		this.update.set({});
+		this.manualCheck = false;
 	}
 }
 
 function isOffline(err: any): boolean {
 	return (
 		typeof err === 'string' &&
-		(err.includes('Could not fetch a valid release') || err.includes('Network Error'))
+		(err.includes('Could not fetch a valid release') ||
+			err.includes('error sending request') ||
+			err.includes('Network Error'))
 	);
 }
 

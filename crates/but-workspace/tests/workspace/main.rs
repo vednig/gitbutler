@@ -1,5 +1,12 @@
+use but_workspace::{DiffSpec, HunkHeader, flatten_diff_specs};
+
+mod branch;
+mod branch_details;
 mod commit_engine;
-mod discard;
-mod head_info;
-mod ref_metadata;
+mod flatten_diff_specs;
+mod ref_info;
+mod snapshot;
+mod tree_manipulation;
+mod ui;
+
 mod utils;

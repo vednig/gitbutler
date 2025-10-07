@@ -1,24 +1,22 @@
 <script lang="ts">
-	import { AuthService } from '$lib/auth/authService.svelte';
+	import { AUTH_SERVICE } from '$lib/auth/authService.svelte';
 	import AddSshKeyModal from '$lib/components/AddSshKeyModal.svelte';
 	import { featureShowOrganizations, featureShowProjectPage } from '$lib/featureFlags';
-	import { SshKeyService, type SshKey } from '$lib/sshKeyService';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
+	import { SSH_KEY_SERVICE, type SshKey } from '$lib/sshKeyService';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
-	import { NotificationSettingsService } from '@gitbutler/shared/settings/notificationSettingsService';
+	import { APP_STATE } from '@gitbutler/shared/redux/store.svelte';
+	import { NOTIFICATION_SETTINGS_SERVICE } from '@gitbutler/shared/settings/notificationSettingsService';
 	import { getNotificationSettingsInterest } from '@gitbutler/shared/settings/notificationSetttingsPreview.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import Toggle from '@gitbutler/ui/Toggle.svelte';
+	import { Button, SectionCard, Toggle } from '@gitbutler/ui';
 	import { env } from '$env/dynamic/public';
 
-	const authService = getContext(AuthService);
-	const userService = getContext(UserService);
-	const appState = getContext(AppState);
-	const notificationSettingsService = getContext(NotificationSettingsService);
-	const sshKeyService = getContext(SshKeyService);
+	const authService = inject(AUTH_SERVICE);
+	const userService = inject(USER_SERVICE);
+	const appState = inject(APP_STATE);
+	const notificationSettingsService = inject(NOTIFICATION_SETTINGS_SERVICE);
+	const sshKeyService = inject(SSH_KEY_SERVICE);
 
 	const notificationSettings = getNotificationSettingsInterest(
 		appState,
@@ -41,6 +39,9 @@
 	let sshKeys = $state<SshKey[]>([]);
 	let loadingSshKeys = $state(true);
 	let addKeyModal = $state<AddSshKeyModal>();
+	let sshKeyToken = $state('');
+	let showSshKeyTokenModal = $state(false);
+	let generatingSshToken = $state(false);
 
 	// New state variables for additional profile fields
 	let websiteValue = $state('');
@@ -191,6 +192,38 @@
 	async function onAddKeyModalClose() {
 		await loadSshKeys();
 	}
+
+	async function generateSshKeyToken() {
+		generatingSshToken = true;
+		try {
+			const formData = new FormData();
+			formData.append('generate_ssh_token', 'true');
+
+			const updatedUser = await userService.updateUser({
+				generate_ssh_token: true
+			});
+
+			if (updatedUser && updatedUser.ssh_key_token) {
+				sshKeyToken = updatedUser.ssh_key_token;
+				showSshKeyTokenModal = true;
+			} else {
+				console.error('Failed to generate SSH key token: No token returned');
+			}
+		} catch (error) {
+			console.error('Failed to generate SSH key token:', error);
+		} finally {
+			generatingSshToken = false;
+		}
+	}
+
+	function closeSshKeyTokenModal() {
+		showSshKeyTokenModal = false;
+		sshKeyToken = '';
+	}
+
+	function handleModalClick(e: Event) {
+		e.stopPropagation();
+	}
 </script>
 
 <svelte:head>
@@ -200,7 +233,10 @@
 <div class="profile-page">
 	<div class="content">
 		{#if !$token}
-			<p>Unauthorized</p>
+			<SectionCard>
+				<h1 class="title">Who this?</h1>
+				<p>Log into your butler account, create one or do whatever you please.</p>
+			</SectionCard>
 		{:else if !$user?.id}
 			<p>Loading...</p>
 		{:else}
@@ -498,12 +534,55 @@
 
 					<button type="button" class="add-key-button" onclick={() => addKeyModal?.show()}>
 						<span class="add-key-icon">+</span>
-						<span>Add SSH Key</span>
+						<span>Upload SSH Public Key</span>
+					</button>
+
+					<button
+						type="button"
+						class="add-key-button"
+						onclick={generateSshKeyToken}
+						disabled={generatingSshToken}
+					>
+						<span class="add-key-icon">+</span>
+						<span>{generatingSshToken ? 'Generating...' : 'Add Key via SSH'}</span>
 					</button>
 				</div>
 			</SectionCard>
 
 			<AddSshKeyModal bind:this={addKeyModal} onClose={onAddKeyModalClose} />
+
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			{#if showSshKeyTokenModal}
+				<div class="ssh-token-modal-backdrop" onclick={closeSshKeyTokenModal}>
+					<div class="ssh-token-modal" onclick={handleModalClick}>
+						<h3 class="ssh-token-modal__title">Add Your SSH Key</h3>
+						<p class="ssh-token-modal__description">
+							Run the following command in your terminal to add your SSH key to GitButler:
+						</p>
+						<div class="ssh-token-modal__code">
+							<code>ssh git@ssh.gitbutler.com add/{sshKeyToken}</code>
+							<button
+								type="button"
+								class="ssh-token-modal__copy-button"
+								onclick={() => {
+									navigator.clipboard.writeText(`ssh git@ssh.gitbutler.com add/${sshKeyToken}`);
+								}}
+							>
+								Copy
+							</button>
+						</div>
+						<p class="ssh-token-modal__note">This token will expire after use or in 5 minutes.</p>
+						<div class="ssh-token-modal__controls">
+							<button
+								type="button"
+								class="ssh-token-modal__close-button"
+								onclick={closeSshKeyTokenModal}>Close</button
+							>
+						</div>
+					</div>
+				</div>
+			{/if}
 
 			<h2 class="section-title">Experimental settings</h2>
 
@@ -546,28 +625,28 @@
 	}
 
 	.content {
-		padding: 48px 32px;
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
-		max-width: 640px;
 		width: 100%;
+		max-width: 640px;
 		min-height: 100vh;
 		margin: auto;
+		padding: 48px 32px;
+		gap: 16px;
 	}
 
 	.title {
-		color: var(--clr-scale-ntrl-0);
-		font-size: 24px;
-		font-weight: 600;
 		align-self: flex-start;
+		color: var(--clr-scale-ntrl-0);
+		font-weight: 600;
+		font-size: 24px;
 	}
 
 	.section-title {
-		color: var(--clr-scale-ntrl-0);
-		font-size: 18px;
-		font-weight: 600;
 		margin-top: 24px;
+		color: var(--clr-scale-ntrl-0);
+		font-weight: 600;
+		font-size: 18px;
 	}
 
 	.profile-form {
@@ -578,17 +657,17 @@
 	.supporter-card__content {
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
 		padding: 16px;
+		gap: 12px;
+		border: 1px solid var(--clr-scale-pop-80);
 		border-radius: var(--radius-m);
 		background-color: var(--clr-scale-pop-95);
-		border: 1px solid var(--clr-scale-pop-80);
 	}
 
 	.supporter-card__title {
 		color: var(--clr-scale-pop-40);
-		font-size: 18px;
 		font-weight: 600;
+		font-size: 18px;
 	}
 
 	.supporter-card__description {
@@ -597,30 +676,15 @@
 		line-height: 1.5;
 	}
 
-	.supporter-card__link {
-		align-self: flex-start;
-		padding: 8px 16px;
-		border-radius: var(--radius-m);
-		background-color: var(--clr-scale-pop-70);
-		color: var(--clr-core-ntrl-100);
-		font-size: 14px;
-		font-weight: 500;
-		text-decoration: none;
-	}
-
-	.supporter-card__link:hover {
-		background-color: var(--clr-scale-pop-60);
-	}
-
 	.profile-pic-wrapper {
 		position: relative;
 		width: 100px;
 		height: 100px;
-		border-radius: var(--radius-m);
 		overflow: hidden;
+		border-radius: var(--radius-m);
 		background-color: var(--clr-scale-pop-70);
-		transition: opacity var(--transition-medium);
 		cursor: pointer;
+		transition: opacity var(--transition-medium);
 
 		&:hover {
 			& .profile-pic__edit-label {
@@ -644,27 +708,27 @@
 		position: absolute;
 		bottom: 8px;
 		left: 8px;
-		color: var(--clr-core-ntrl-100);
-		background-color: var(--clr-scale-ntrl-20);
 		padding: 4px 6px;
 		border-radius: var(--radius-m);
+		background-color: var(--clr-scale-ntrl-20);
+		color: var(--clr-core-ntrl-100);
+		font-weight: 600;
+		font-size: 11px;
 		opacity: 0;
 		transition: opacity var(--transition-medium);
-		font-size: 11px;
-		font-weight: 600;
 	}
 
 	.contact-info {
-		flex: 1;
 		display: flex;
+		flex: 1;
 		flex-direction: column;
 		gap: 20px;
 	}
 
 	.contact-info__fields {
-		width: 100%;
 		display: flex;
 		flex-direction: column;
+		width: 100%;
 		gap: 12px;
 	}
 
@@ -680,15 +744,15 @@
 
 		input {
 			padding: 8px 12px;
-			border-radius: var(--radius-m);
 			border: 1px solid var(--clr-border-2);
+			border-radius: var(--radius-m);
 			background-color: var(--clr-bg-1);
 			color: var(--clr-scale-ntrl-0);
 			font-size: 14px;
 
 			&:read-only {
-				opacity: 0.7;
 				cursor: not-allowed;
+				opacity: 0.7;
 			}
 
 			&:not(:read-only) {
@@ -701,11 +765,11 @@
 	}
 
 	.hidden-input {
-		cursor: pointer;
 		z-index: var(--z-ground);
 		position: absolute;
 		width: 100%;
 		height: 100%;
+		cursor: pointer;
 		opacity: 0;
 	}
 
@@ -727,34 +791,22 @@
 		user-select: none;
 
 		input[type='checkbox'] {
-			margin-top: 4px;
 			width: 16px;
 			height: 16px;
-			border-radius: var(--radius-s);
+			margin-top: 4px;
 			border: 1px solid var(--clr-border-2);
+			border-radius: var(--radius-s);
 			background-color: var(--clr-bg-1);
 			cursor: pointer;
 
 			&:checked {
-				background-color: var(--clr-scale-pop-70);
 				border-color: var(--clr-scale-pop-70);
-
-				&::after {
-					content: '';
-					position: absolute;
-					left: 5px;
-					top: 2px;
-					width: 4px;
-					height: 8px;
-					border: solid white;
-					border-width: 0 2px 2px 0;
-					transform: rotate(45deg);
-				}
+				background-color: var(--clr-scale-pop-70);
 			}
 
 			&:disabled {
-				opacity: 0.5;
 				cursor: not-allowed;
+				opacity: 0.5;
 			}
 		}
 	}
@@ -767,8 +819,8 @@
 
 	.checkbox-title {
 		color: var(--clr-scale-ntrl-0);
-		font-size: 14px;
 		font-weight: 500;
+		font-size: 14px;
 	}
 
 	.checkbox-caption {
@@ -788,9 +840,9 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 12px;
+		border: 1px solid var(--clr-border-2);
 		border-radius: var(--radius-m);
 		background-color: var(--clr-bg-1);
-		border: 1px solid var(--clr-border-2);
 	}
 
 	.ssh-key-info {
@@ -801,34 +853,34 @@
 
 	.ssh-key-name {
 		color: var(--clr-scale-ntrl-0);
-		font-size: 14px;
 		font-weight: 500;
+		font-size: 14px;
 	}
 
 	.ssh-key-fingerprint {
 		color: var(--clr-scale-ntrl-30);
 		font-size: 13px;
-		font-family: monospace;
+		font-family: var(--fontfamily-mono);
 	}
 
 	.delete-button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		width: 24px;
 		height: 24px;
-		border-radius: var(--radius-s);
 		border: 1px solid var(--clr-border-2);
+		border-radius: var(--radius-s);
 		background-color: transparent;
 		color: var(--clr-scale-ntrl-30);
 		font-size: 18px;
 		line-height: 1;
 		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
 		transition: all var(--transition-medium);
 
 		&:hover {
-			background-color: var(--clr-scale-ntrl-10);
 			border-color: var(--clr-scale-ntrl-30);
+			background-color: var(--clr-scale-ntrl-10);
 			color: var(--clr-scale-ntrl-50);
 		}
 	}
@@ -836,19 +888,25 @@
 	.add-key-button {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		margin-bottom: 8px;
 		padding: 12px;
-		border-radius: var(--radius-m);
+		gap: 8px;
 		border: 1px dashed var(--clr-border-2);
+		border-radius: var(--radius-m);
 		background-color: transparent;
 		color: var(--clr-scale-ntrl-50);
 		font-size: 14px;
 		cursor: pointer;
 		transition: all var(--transition-medium);
 
-		&:hover {
+		&:hover:not(:disabled) {
 			border-color: var(--clr-scale-pop-70);
 			color: var(--clr-scale-pop-70);
+		}
+
+		&:disabled {
+			cursor: not-allowed;
+			opacity: 0.5;
 		}
 	}
 
@@ -859,10 +917,10 @@
 
 	.loading,
 	.no-keys {
+		padding: 24px;
 		color: var(--clr-scale-ntrl-30);
 		font-size: 14px;
 		text-align: center;
-		padding: 24px;
 	}
 
 	.additional-info {
@@ -872,9 +930,9 @@
 	}
 
 	.additional-info__fields {
-		width: 100%;
 		display: flex;
 		flex-direction: column;
+		width: 100%;
 		gap: 12px;
 	}
 
@@ -882,12 +940,12 @@
 		align-self: flex-end;
 		margin-top: 16px;
 		padding: 8px 16px;
+		border: none;
 		border-radius: var(--radius-m);
 		background-color: var(--clr-scale-pop-70);
 		color: var(--clr-core-ntrl-100);
-		font-size: 14px;
 		font-weight: 500;
-		border: none;
+		font-size: 14px;
 		cursor: pointer;
 		transition: background-color var(--transition-medium);
 
@@ -896,8 +954,101 @@
 		}
 
 		&:disabled {
-			opacity: 0.7;
 			cursor: not-allowed;
+			opacity: 0.7;
+		}
+	}
+
+	.ssh-token-modal-backdrop {
+		display: flex;
+		z-index: 1000;
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		align-items: center;
+		justify-content: center;
+		background-color: rgba(0, 0, 0, 0.5);
+	}
+
+	.ssh-token-modal {
+		display: flex;
+		flex-direction: column;
+		width: 600px;
+		max-width: 90vw;
+		padding: 24px;
+		gap: 16px;
+		border-radius: var(--radius-m);
+		background-color: var(--clr-bg-1);
+	}
+
+	.ssh-token-modal__title {
+		color: var(--clr-scale-ntrl-0);
+		font-weight: 600;
+		font-size: 18px;
+	}
+
+	.ssh-token-modal__description {
+		color: var(--clr-scale-ntrl-30);
+		font-size: 14px;
+		line-height: 1.5;
+	}
+
+	.ssh-token-modal__code {
+		position: relative;
+		padding: 16px;
+		border-radius: var(--radius-m);
+		background-color: var(--clr-bg-2);
+		color: var(--clr-scale-ntrl-0);
+		font-size: 13px;
+		line-height: 1.4;
+		font-family: var(--fontfamily-mono);
+		word-break: break-all;
+	}
+
+	.ssh-token-modal__copy-button {
+		position: absolute;
+		top: 8px;
+		right: 8px;
+		padding: 4px 8px;
+		border: none;
+		border-radius: var(--radius-s);
+		background-color: var(--clr-scale-ntrl-70);
+		color: var(--clr-core-ntrl-100);
+		font-size: 12px;
+		cursor: pointer;
+		transition: background-color var(--transition-medium);
+
+		&:hover {
+			background-color: var(--clr-scale-ntrl-50);
+		}
+	}
+
+	.ssh-token-modal__note {
+		color: var(--clr-scale-ntrl-30);
+		font-size: 13px;
+		line-height: 1.5;
+	}
+
+	.ssh-token-modal__controls {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 8px;
+	}
+
+	.ssh-token-modal__close-button {
+		padding: 8px 16px;
+		border: none;
+		border-radius: var(--radius-m);
+		background-color: var(--clr-scale-pop-70);
+		color: var(--clr-core-ntrl-100);
+		font-size: 14px;
+		cursor: pointer;
+		transition: background-color var(--transition-medium);
+
+		&:hover {
+			background-color: var(--clr-scale-pop-60);
 		}
 	}
 </style>

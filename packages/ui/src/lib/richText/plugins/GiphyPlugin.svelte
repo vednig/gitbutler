@@ -1,9 +1,9 @@
 <script lang="ts">
-	import Icon from '$lib/Icon.svelte';
+	import Icon from '$components/Icon.svelte';
 	import { getCursorPosition, insertImageAtCaret } from '$lib/richText/selection';
 	import { clickOutside } from '$lib/utils/clickOutside';
-	import { portal } from '$lib/utils/portal';
 	import { debounce } from '$lib/utils/debounce';
+	import { portal } from '$lib/utils/portal';
 	import { gifPaginator, GiphyFetch } from '@giphy/js-fetch-api';
 	import { Gif } from '@giphy/svelte-components';
 	import { onMount } from 'svelte';
@@ -145,8 +145,8 @@
 	}
 	.inner {
 		position: relative;
-		padding: 6px;
 		max-height: 300px;
+		padding: 6px;
 		overflow-y: auto;
 		border: 1px solid var(--clr-border-1);
 		border-radius: var(--radius-s);

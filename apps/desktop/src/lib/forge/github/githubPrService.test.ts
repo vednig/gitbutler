@@ -9,7 +9,7 @@ describe('GitHubPrService', () => {
 	let gh: GitHub;
 	let service: GitHubPrService | undefined;
 
-	const { gitHubApi, octokit } = setupMockGitHubApi();
+	const { gitHubClient, gitHubApi, octokit } = setupMockGitHubApi();
 
 	beforeEach(() => {
 		gh = new GitHub({
@@ -19,19 +19,21 @@ describe('GitHubPrService', () => {
 				owner: 'test-owner'
 			},
 			baseBranch: 'main',
-			gitHubApi
+			api: gitHubApi,
+			authenticated: true,
+			client: gitHubClient
 		});
 		service = gh.prService;
 	});
 
 	test('test parsing response', async () => {
 		const title = 'PR Title';
-		vi.spyOn(octokit.pulls, 'get').mockReturnValueOnce(
+		vi.spyOn(octokit.pulls, 'get').mockReturnValue(
 			Promise.resolve({
-				data: { title }
+				data: { title, updated_at: new Date().toISOString() }
 			} as RestEndpointMethodTypes['pulls']['get']['response'])
 		);
 		const pr = await service?.fetch(123);
-		expect(pr?.data?.title).equal(title);
+		expect(pr?.title).equal(title);
 	});
 });

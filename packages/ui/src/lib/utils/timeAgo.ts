@@ -27,12 +27,12 @@ function getSecondsUntilUpdate(seconds: number) {
 	}
 }
 
-export function getTimeAgo(date: Date, addSuffix: boolean = true): string {
+export function getTimeAgo(input: Date | number, addSuffix: boolean = true): string {
+	const date = typeof input === 'number' ? new Date(input) : input;
+
 	const seconds = Math.round(Math.abs((new Date().getTime() - date.getTime()) / 1000.0));
 	if (seconds < 10) {
 		return 'just now';
-	} else if (seconds < 60) {
-		return `< 1 min${addSuffix ? ' ago' : ''}`;
 	} else {
 		return customFormatDistance(date, addSuffix);
 	}
@@ -63,6 +63,17 @@ export function createTimeAgoStore(
 			clearTimeout(timeoutId);
 		};
 	});
+}
+
+/**
+ * Formats a date into an absolute timestamp in a common, easy-to-read format
+ * Example: "January 15, 2024 at 3:45 PM"
+ */
+export function getAbsoluteTimestamp(input: Date | number): string {
+	const date = typeof input === 'number' ? new Date(input) : input;
+
+	// Format the date in a readable format
+	return dayjs(date).format('MMMM D, YYYY [at] h:mm A');
 }
 
 // SHORTHAND WORDS

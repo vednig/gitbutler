@@ -20,8 +20,7 @@ impl Socket for BufStream<UnixStream> {
             .peer_cred()
             .unwrap()
             .pid()
-            .ok_or(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            .ok_or(std::io::Error::other(
                 "no pid available for peer connection",
             ))
     }
@@ -34,7 +33,7 @@ impl Socket for BufStream<UnixStream> {
         let mut buf = String::new();
         <Self as AsyncBufReadExt>::read_line(self, &mut buf).await?;
         // TODO: use an array of `char`
-        #[allow(clippy::manual_pattern_char_comparison)]
+        #[expect(clippy::manual_pattern_char_comparison)]
         Ok(buf.trim_end_matches(|c| c == '\r' || c == '\n').into())
     }
 

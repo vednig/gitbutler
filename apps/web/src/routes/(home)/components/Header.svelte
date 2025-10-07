@@ -2,8 +2,8 @@
 	import HeaderLink from '$home/components/HeaderLink.svelte';
 	import HeaderMobileLink from '$home/components/HeaderMobileLink.svelte';
 	import * as jsonLinks from '$home/data/links.json';
-	import { AuthService } from '$lib/auth/authService.svelte';
-	import { getContext } from '@gitbutler/shared/context';
+	import { AUTH_SERVICE } from '$lib/auth/authService.svelte';
+	import { inject } from '@gitbutler/core/context';
 	import { fly } from 'svelte/transition';
 	import { env } from '$env/dynamic/public';
 
@@ -13,7 +13,7 @@
 		isMobileMenuOpen = !isMobileMenuOpen;
 	}
 
-	const authService = getContext(AuthService);
+	const authService = inject(AUTH_SERVICE);
 	let token = $derived(authService.tokenReadable);
 </script>
 
@@ -113,7 +113,7 @@
 		</section>
 		<section class="navigation-section">
 			{#if $token}
-				<HeaderLink label="My Dashboard" href={'/'} icon="dashboard" />
+				<HeaderLink label="My Dashboard" href="/" icon="dashboard" />
 			{:else}
 				<HeaderLink
 					label="Sign up / Log in"
@@ -169,7 +169,7 @@
 				<HeaderMobileLink label="Jobs" href={jsonLinks.resources.jobs.url} />
 				<section class="navigation-section">
 					{#if $token}
-						<HeaderMobileLink label="My Dashboard" href={'/'} icon="dashboard" />
+						<HeaderMobileLink label="My Dashboard" href="/" icon="dashboard" />
 					{:else}
 						<HeaderMobileLink
 							label="Sign up / Log in"
@@ -200,9 +200,9 @@
 	}
 
 	.logo {
+		display: flex;
 		z-index: 11;
 		position: relative;
-		display: flex;
 		align-items: center;
 		gap: 20px;
 
@@ -301,24 +301,24 @@
 	// BURGER
 
 	.burger {
+		display: flex;
 		z-index: 11;
 		position: relative;
-		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 40px;
 		height: 40px;
-		background: transparent;
 		border: none;
+		background: transparent;
 		cursor: pointer;
 
 		&::before,
 		&::after {
-			content: '';
 			position: absolute;
 			width: 80%;
 			height: 2px;
 			background-color: var(--clr-black);
+			content: '';
 			transition: transform 0.1s ease-in-out;
 		}
 
@@ -343,15 +343,15 @@
 	}
 
 	.mobile-menu {
+		display: flex;
 		z-index: 10;
 		position: absolute;
 		top: 0;
 		left: 0;
-		display: flex;
 		flex-direction: column;
-		gap: 2px;
 		width: 100%;
 		padding: 120px 40px 40px;
+		gap: 2px;
 		background-color: var(--clr-white);
 
 		@media (max-width: 800px) {

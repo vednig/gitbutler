@@ -1,14 +1,14 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import OrganizationProfile from '$lib/components/OrganizationProfile.svelte';
 	import UserProfile from '$lib/components/UserProfile.svelte';
 	import { featureShowProjectPage } from '$lib/featureFlags';
-	import { OwnerService } from '$lib/owner/ownerService';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import { getContext } from 'svelte';
+	import { OWNER_SERVICE } from '$lib/owner/ownerService';
+	import { inject } from '@gitbutler/core/context';
+	import { WEB_ROUTES_SERVICE } from '@gitbutler/shared/routing/webRoutes.svelte';
 	import type { OwnerParameters } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import { goto } from '$app/navigation';
 
-	const routes = getContext(WebRoutesService) as WebRoutesService;
+	const routes = inject(WEB_ROUTES_SERVICE);
 
 	$effect(() => {
 		if (!$featureShowProjectPage) {
@@ -22,20 +22,16 @@
 
 	let { data }: Props = $props();
 
-	const ownerService = getContext(OwnerService) as OwnerService;
+	const ownerService = inject(OWNER_SERVICE);
 
 	// Create a reactive store for the owner data
-	let ownerStore = $state(ownerService.getOwner(data.ownerSlug));
+	let ownerStore = $derived(ownerService.getOwner(data.ownerSlug));
 	let owner = $derived($ownerStore);
 
 	// Helper derived values for easier template usage
 	let loading = $derived(owner.status === 'loading');
 	let error = $derived(owner.status === 'error' ? owner.error : null);
 	let ownerData = $derived(owner.status === 'found' ? owner.value : null);
-
-	$effect(() => {
-		ownerStore = ownerService.getOwner(data.ownerSlug);
-	});
 </script>
 
 {#if loading}

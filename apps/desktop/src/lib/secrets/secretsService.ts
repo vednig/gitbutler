@@ -1,25 +1,23 @@
-import { invoke } from '$lib/backend/ipc';
-import { buildContext } from '@gitbutler/shared/context';
-import type { GitConfigService } from '$lib/config/gitConfigService';
+import { InjectionToken } from '@gitbutler/core/context';
+import type { IBackend } from '$lib/backend';
 
 export type SecretsService = {
 	get(handle: string): Promise<string | undefined>;
 	set(handle: string, secret: string): Promise<void>;
 };
 
-export const [getSecretsService, setSecretsService] =
-	buildContext<SecretsService>('secretsService');
+export const SECRET_SERVICE = new InjectionToken<SecretsService>('SecretService');
 
 export class RustSecretService implements SecretsService {
-	constructor(private gitConfigService: GitConfigService) {}
+	constructor(private backend: IBackend) {}
 
 	async get(handle: string) {
-		const secret = await invoke<string>('secret_get_global', { handle });
+		const secret = await this.backend.invoke<string>('secret_get_global', { handle });
 		if (secret) return secret;
 	}
 
 	async set(handle: string, secret: string) {
-		await invoke('secret_set_global', {
+		await this.backend.invoke('secret_set_global', {
 			handle,
 			secret
 		});

@@ -1,5 +1,6 @@
-import type { EntityState, ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
-import type { CombinedState } from '@reduxjs/toolkit/query';
+import type { PostHogWrapper } from '$lib/analytics/posthog';
+import type { ThunkDispatch, UnknownAction } from '@reduxjs/toolkit';
+import type { RootState } from '@reduxjs/toolkit/query';
 
 /**
  *	The api is necessary to create the store, so we need to provide
@@ -10,6 +11,7 @@ import type { CombinedState } from '@reduxjs/toolkit/query';
  */
 export type HookContext = {
 	/** Without the nested function we get looping reactivity.  */
-	getState: () => () => { [k: string]: CombinedState<any, any, any> | EntityState<any, any> };
+	getState: () => RootState<any, any, any>;
 	getDispatch: () => ThunkDispatch<any, any, UnknownAction>;
+	posthog?: PostHogWrapper;
 };

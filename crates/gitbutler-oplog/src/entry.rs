@@ -1,7 +1,6 @@
 use std::{
     fmt,
     fmt::{Debug, Display, Formatter},
-    path::PathBuf,
     str::FromStr,
 };
 
@@ -21,12 +20,6 @@ pub struct Snapshot {
     /// Snapshot creation time in seconds from Unix epoch seconds, based on a commit as `commit_id`.
     #[serde(serialize_with = "gitbutler_serde::as_time_seconds_from_unix_epoch")]
     pub created_at: git2::Time,
-    /// The number of working directory lines added in the snapshot
-    pub lines_added: usize,
-    /// The number of working directory lines removed in the snapshot
-    pub lines_removed: usize,
-    /// The list of working directory files that were changed in the snapshot
-    pub files_changed: Vec<PathBuf>,
     /// Snapshot details as persisted in the commit message, or `None` if the details couldn't be parsed.
     pub details: Option<SnapshotDetails>,
 }
@@ -114,12 +107,12 @@ impl Display for SnapshotDetails {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         writeln!(f, "{}\n", self.title)?;
         if let Some(body) = &self.body {
-            writeln!(f, "{}\n", body)?;
+            writeln!(f, "{body}\n")?;
         }
         writeln!(f, "Version: {}", self.version)?;
         writeln!(f, "Operation: {}", self.operation)?;
         for line in &self.trailers {
-            writeln!(f, "{}", line)?;
+            writeln!(f, "{line}")?;
         }
         Ok(())
     }
@@ -129,6 +122,7 @@ impl Display for SnapshotDetails {
 pub enum OperationKind {
     CreateCommit,
     CreateBranch,
+    StashIntoBranch,
     SetBaseBranch,
     MergeUpstream,
     UpdateWorkspaceBase,
@@ -144,6 +138,7 @@ pub enum OperationKind {
     DiscardLines,
     DiscardHunk,
     DiscardFile,
+    DiscardChanges,
     AmendCommit,
     UndoCommit,
     UnapplyBranch,
@@ -151,6 +146,7 @@ pub enum OperationKind {
     SquashCommit,
     UpdateCommitMessage,
     MoveCommit,
+    MoveBranch,
     RestoreFromSnapshot,
     ReorderCommit,
     InsertBlankCommit,
@@ -163,6 +159,9 @@ pub enum OperationKind {
     UpdateDependentBranchName,
     UpdateDependentBranchDescription,
     UpdateDependentBranchPrNumber,
+    AutoHandleChangesBefore,
+    AutoHandleChangesAfter,
+    SplitBranch,
     #[default]
     Unknown,
 }

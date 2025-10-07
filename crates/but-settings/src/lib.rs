@@ -1,9 +1,6 @@
 #![allow(deprecated)]
 use serde::{Deserialize, Serialize};
 
-mod legacy;
-pub use legacy::LegacySettings;
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -17,6 +14,14 @@ pub struct AppSettings {
     pub github_oauth_app: app_settings::GitHubOAuthAppSettings,
     /// Application feature flags.
     pub feature_flags: app_settings::FeatureFlags,
+    /// Allows for additional "connect-src" hosts to be included. Requires app restart.
+    pub extra_csp: app_settings::ExtraCsp,
+    /// Settings related to fetching.
+    pub fetch: app_settings::Fetch,
+    /// Settings related to Claude Code.
+    pub claude: app_settings::Claude,
+    /// Settings related to code reviews and pull requests.
+    pub reviews: app_settings::Reviews,
 }
 
 impl Default for AppSettings {

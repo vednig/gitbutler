@@ -24,11 +24,15 @@ pub struct UpdateRequest {
     pub gitbutler_data_last_fetched: Option<FetchResult>,
     pub preferred_key: Option<AuthKey>,
     pub ok_with_force_push: Option<bool>,
+    pub force_push_protection: Option<bool>,
     pub gitbutler_code_push_state: Option<CodePushState>,
     pub project_data_last_fetched: Option<FetchResult>,
     pub omit_certificate_check: Option<bool>,
     pub use_diff_context: Option<bool>,
     pub snapshot_lines_threshold: Option<usize>,
+    pub forge_override: Option<String>,
+    #[serde(default = "default_false")]
+    pub unset_forge_override: bool,
 }
 
 fn default_false() -> bool {
@@ -59,7 +63,7 @@ impl Storage {
                     })
                     .collect();
 
-                all_projects.sort_by(|a, b| a.title.cmp(&b.title));
+                all_projects.sort_by_key(|p| p.title.to_lowercase());
                 Ok(all_projects)
             }
             None => Ok(vec![]),
@@ -103,6 +107,14 @@ impl Storage {
             project.api = None;
         }
 
+        if let Some(forge_override) = &update_request.forge_override {
+            project.forge_override = Some(forge_override.clone());
+        }
+
+        if update_request.unset_forge_override {
+            project.forge_override = None;
+        }
+
         if let Some(preferred_key) = &update_request.preferred_key {
             project.preferred_key = preferred_key.clone();
         }
@@ -123,6 +135,10 @@ impl Storage {
 
         if let Some(ok_with_force_push) = update_request.ok_with_force_push {
             *project.ok_with_force_push = ok_with_force_push;
+        }
+
+        if let Some(force_push_protection) = update_request.force_push_protection {
+            project.force_push_protection = force_push_protection;
         }
 
         if let Some(omit_certificate_check) = update_request.omit_certificate_check {

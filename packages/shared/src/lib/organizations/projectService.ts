@@ -11,6 +11,7 @@ import {
 	type Project
 } from '$lib/organizations/types';
 import { POLLING_GLACIALLY, POLLING_REGULAR } from '$lib/polling';
+import { InjectionToken } from '@gitbutler/core/context';
 import type { Branch, ApiBranch } from '$lib/branches/types';
 import type { HttpClient } from '$lib/network/httpClient';
 import type { ShareLevel } from '$lib/permissions';
@@ -41,6 +42,8 @@ function toApiUpdateParams(real: UpdateParams): ApiUpdateParams {
 		share_level: real.shareLevel
 	};
 }
+
+export const PROJECT_SERVICE: InjectionToken<ProjectService> = new InjectionToken('ProjectService');
 
 export class ProjectService {
 	private readonly projectInterests = new InterestStore<{ repositoryId: string }>(POLLING_REGULAR);
@@ -75,7 +78,7 @@ export class ProjectService {
 						})
 					);
 				} catch (error: unknown) {
-					this.appDispatch.dispatch(projectTable.upsertOne(errorToLoadable(error, repositoryId)));
+					this.appDispatch.dispatch(projectTable.addOne(errorToLoadable(error, repositoryId)));
 				}
 			})
 			.createInterest();

@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { beforeNavigate } from '$app/navigation';
+	import { page } from '$app/state';
 	import Header from '$home/components/Header.svelte';
 	import * as jsonLinks from '$home/data/links.json';
 	import BlogHighlights from '$home/sections/BlogHighlights.svelte';
@@ -7,14 +10,14 @@
 	import Features from '$home/sections/Features.svelte';
 	import HomeFooter from '$home/sections/Footer.svelte';
 	import Hero from '$home/sections/Hero.svelte';
-	import { AuthService } from '$lib/auth/authService.svelte';
+	import { AuthService, AUTH_SERVICE } from '$lib/auth/authService.svelte';
 	import { updateFavIcon } from '$lib/utils/faviconUtils';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import { setContext, type Snippet } from 'svelte';
+	import { provide } from '@gitbutler/core/context';
+	import { WebRoutesService, WEB_ROUTES_SERVICE } from '@gitbutler/shared/routing/webRoutes.svelte';
+	import { type Snippet } from 'svelte';
 	import { get } from 'svelte/store';
-	import { beforeNavigate } from '$app/navigation';
-	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
+	import '@gitbutler/design-core/tokens';
+	import '@gitbutler/design-core/fonts';
 	import '$lib/styles/global.css';
 
 	interface Props {
@@ -24,10 +27,10 @@
 	const { children }: Props = $props();
 
 	const routesService = new WebRoutesService(location.protocol + '//' + location.host, true);
-	setContext(WebRoutesService, routesService);
+	provide(WEB_ROUTES_SERVICE, routesService);
 
 	const authService = new AuthService();
-	setContext(AuthService, authService);
+	provide(AUTH_SERVICE, authService);
 
 	let token = $state<string | null>();
 
@@ -86,17 +89,17 @@
 	.marketing-page {
 		display: flex;
 		flex-direction: column;
-		max-width: 1440px;
 		width: 100%;
+		max-width: 1440px;
 		margin: 0 auto;
 		padding: 0 60px;
 
-		font-family: 'Spline Sans Mono', monospace;
+		font-family: var(--fontfamily-mono);
 
 		/* optimise font rendering */
 		-webkit-font-smoothing: antialiased;
-		text-rendering: optimizeLegibility;
 		color: var(--clr-black);
+		text-rendering: optimizeLegibility;
 
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;

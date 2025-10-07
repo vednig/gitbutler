@@ -14,7 +14,7 @@ fn intersect_workspace_ranges(
     let mut missed_hunks = Vec::new();
     for change in worktree_changes {
         let unidiff = change.unified_diff(repo, 0)?;
-        let but_core::UnifiedDiff::Patch { hunks } = unidiff else {
+        let Some(but_core::UnifiedDiff::Patch { hunks, .. }) = unidiff else {
             continue;
         };
         let mut intersections = Vec::new();
@@ -61,7 +61,6 @@ mod types {
 
     /// A structure that has stable content so it can be asserted on, showing the hunk-ranges that intersect with each of the input ranges.
     #[derive(Debug)]
-    #[allow(dead_code)]
     pub struct WorkspaceDigest {
         /// All available ranges for a tracked path, basically all changes seen over a set of commits.
         pub ranges_by_path: Vec<(BString, Vec<StableHunkRange>)>,
@@ -72,7 +71,6 @@ mod types {
     }
 
     #[derive(Debug)]
-    #[allow(dead_code)]
     pub struct HunkIntersection {
         /// The hunk that was used for the intersection.
         pub hunk: but_core::unified_diff::DiffHunk,
@@ -82,7 +80,6 @@ mod types {
 
     /// A structure that has stable content so it can be asserted on, showing the hunk-ranges that intersect with each of the input ranges.
     #[derive(Debug)]
-    #[allow(dead_code)]
     pub struct WorkspaceWithoutRanges<'a> {
         /// The ranges that intersected with an input hunk.
         pub intersections_by_path: &'a Vec<(BString, Vec<HunkIntersection>)>,
@@ -101,7 +98,7 @@ mod types {
     }
 
     #[derive(Debug)]
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub struct StableHunkRange {
         change_type: TreeStatusKind,
         commit_id: gix::ObjectId,

@@ -10,13 +10,10 @@ fn change_2_to_two_in_second_commit() -> anyhow::Result<()> {
                 "file",
                 [
                     HunkIntersection {
-                        hunk: DiffHunk {
-                            old_start: 2,
-                            old_lines: 1,
-                            new_start: 2,
-                            new_lines: 1,
-                            diff: "@@ -2,1 +2,1 @@\n-2\n+two\n",
-                        },
+                        hunk: DiffHunk("@@ -2,1 +2,1 @@
+                        -2
+                        +two
+                        "),
                         commit_intersections: [
                             StableHunkRange {
                                 change_type: Modification,
@@ -47,13 +44,10 @@ fn change_2_to_two_in_second_commit_after_file_rename() -> anyhow::Result<()> {
         missed_hunks: [
             (
                 "file-renamed",
-                DiffHunk {
-                    old_start: 2,
-                    old_lines: 1,
-                    new_start: 2,
-                    new_lines: 1,
-                    diff: "@@ -2,1 +2,1 @@\n-2\n+two\n",
-                },
+                DiffHunk("@@ -2,1 +2,1 @@
+                -2
+                +two
+                "),
             ),
         ],
     }
@@ -73,13 +67,10 @@ fn change_2_to_two_in_second_commit_after_shift_by_two() -> anyhow::Result<()> {
                 "file",
                 [
                     HunkIntersection {
-                        hunk: DiffHunk {
-                            old_start: 4,
-                            old_lines: 1,
-                            new_start: 4,
-                            new_lines: 1,
-                            diff: "@@ -4,1 +4,1 @@\n-2\n+two\n",
-                        },
+                        hunk: DiffHunk("@@ -4,1 +4,1 @@
+                        -2
+                        +two
+                        "),
                         commit_intersections: [
                             StableHunkRange {
                                 change_type: Modification,
@@ -111,13 +102,9 @@ fn add_single_line() -> anyhow::Result<()> {
                 "file",
                 [
                     HunkIntersection {
-                        hunk: DiffHunk {
-                            old_start: 6,
-                            old_lines: 0,
-                            new_start: 6,
-                            new_lines: 1,
-                            diff: "@@ -6,0 +6,1 @@\n+5.5\n",
-                        },
+                        hunk: DiffHunk("@@ -6,0 +6,1 @@
+                        +5.5
+                        "),
                         commit_intersections: [
                             StableHunkRange {
                                 change_type: Modification,
@@ -149,13 +136,9 @@ fn remove_single_line() -> anyhow::Result<()> {
                 "file",
                 [
                     HunkIntersection {
-                        hunk: DiffHunk {
-                            old_start: 5,
-                            old_lines: 1,
-                            new_start: 5,
-                            new_lines: 0,
-                            diff: "@@ -5,1 +5,0 @@\n-5\n",
-                        },
+                        hunk: DiffHunk("@@ -5,1 +5,0 @@
+                        -5
+                        "),
                         commit_intersections: [
                             StableHunkRange {
                                 change_type: Modification,
@@ -177,6 +160,7 @@ fn remove_single_line() -> anyhow::Result<()> {
 
 mod util {
     use crate::{WorkspaceDigest, intersect_workspace_ranges};
+    use but_core::ref_metadata::StackId;
     use but_hunk_dependency::{InputCommit, InputStack, tree_changes_to_input_files};
 
     pub fn repo(name: &str) -> anyhow::Result<gix::Repository> {
@@ -209,7 +193,7 @@ mod util {
                 commit.parent_ids().count() < 2,
                 "For now we probably can't handle the non-linear case correctly"
             );
-            let commit_changes = but_core::diff::commit_changes(
+            let (commit_changes, _) = but_core::diff::tree_changes(
                 repo,
                 commit.parent_ids.iter().next().copied(),
                 commit.id,
@@ -224,7 +208,7 @@ mod util {
         }
         commits.reverse();
         let stack = InputStack {
-            stack_id: Default::default(),
+            stack_id: StackId::generate(),
             commits_from_base_to_tip: commits,
         };
         Ok(vec![stack])

@@ -12,11 +12,10 @@ use gitbutler_project::access::WorktreeReadPermission;
 use gitbutler_reference::normalize_branch_name;
 use gitbutler_reference::RemoteRefname;
 use gitbutler_serde::BStringForFrontend;
-use gitbutler_stack::{Stack as GitButlerBranch, StackId, Target};
+use gitbutler_stack::{Stack, StackId, Target};
 use gix::object::tree::diff::Action;
-use gix::prelude::{ObjectIdExt, TreeDiffChangeExt};
+use gix::prelude::TreeDiffChangeExt;
 use gix::reference::Category;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -55,11 +54,10 @@ pub fn list_branches(
     filter: Option<BranchListingFilter>,
     filter_branch_names: Option<Vec<BranchIdentity>>,
 ) -> Result<Vec<BranchListing>> {
-    let mut repo = ctx.gix_repository()?;
+    let mut repo = ctx.gix_repo()?;
     repo.object_cache_size_if_unset(1024 * 1024);
     let has_filter = filter.is_some();
     let filter = filter.unwrap_or_default();
-    let vb_handle = ctx.project().virtual_branches();
     let platform = repo.references()?;
     let mut branches: Vec<GroupBranch> = vec![];
     for reference in platform.all()?.filter_map(Result::ok) {
@@ -89,7 +87,36 @@ pub fn list_branches(
         });
     }
 
-    let stacks = vb_handle.list_all_stacks()?;
+    let vb_handle = ctx.project().virtual_branches();
+    let remote_names = repo.remote_names();
+    let stacks = if ctx.app_settings().feature_flags.ws3 {
+        if let Some(workspace_ref) = repo.try_find_reference("refs/heads/gitbutler/workspace")? {
+            // Let's get this here for convenience, and hope this isn't ever called by a writer (or there will be a deadlock).
+            let read_guard = ctx.project().shared_worktree_access();
+            let meta = ctx.meta(read_guard.read_permission())?;
+            let info = but_workspace::ref_info(
+                workspace_ref,
+                &*meta,
+                but_workspace::ref_info::Options {
+                    traversal: but_graph::init::Options::limited(),
+                    expensive_commit_info: false,
+                },
+            )?;
+            info.stacks
+                .into_iter()
+                .filter_map(|s| GitButlerStack::try_new(s, &remote_names).transpose())
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        }
+    } else {
+        vb_handle
+            .list_all_stacks()?
+            .iter()
+            .map(|s| GitButlerStack::new_from_old(s, &remote_names))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
     branches.extend(stacks.iter().map(|s| GroupBranch::Virtual(s.clone())));
     let mut branches = combine_branches(branches, &repo, vb_handle.get_default_target()?)?;
 
@@ -99,7 +126,7 @@ pub fn list_branches(
     // Filter out virtual branches which have no local or remote branches
     branches.retain(|branch| {
         // If there is no virtual branch, keep the grouping
-        let Some(virtual_branch) = &branch.virtual_branch else {
+        let Some(virtual_branch) = &branch.stack else {
             return true;
         };
 
@@ -126,30 +153,31 @@ pub fn list_branches(
         branches.retain(|branch_listing| branch_names.contains(&branch_listing.name))
     }
 
-    // Get a list of all stack branches that do not have the same name as the
-    // stack itself.
-    let branch_identities_to_exclude = stacks
-        .iter()
-        .filter(|stack| {
-            let Ok(normalized_name) = normalize_branch_name(&stack.name) else {
-                return false;
-            };
-            let head_matches_stack_name = stack
-                .branches()
-                .iter()
-                .any(|branch| branch.name() == &normalized_name);
-
-            !head_matches_stack_name
-        })
+    // We want to exclude branches that are already part of a stack.
+    // To do this, we build up a list of all the branch identities that are
+    // part of a stack and then filter out any branches that have been grouped
+    // without a stack and match one of these identities.
+    let branch_identities_to_exclude: HashSet<BString> = stacks
+        .into_iter()
         .flat_map(|s| {
-            s.branches()
+            s.unarchived_segments
                 .into_iter()
-                .map(|b| BString::from(b.name().to_owned()))
-                .collect_vec()
+                .map(|b| b.short_name().into())
+                .chain(Some(s.name.into()))
         })
-        .collect_vec();
+        .collect::<HashSet<_>>();
 
-    branches.retain(|branch| !branch_identities_to_exclude.contains(&(*branch.name).to_owned()));
+    branches.retain(|branch| {
+        if branch.stack.is_some() {
+            return true;
+        }
+
+        if branch_identities_to_exclude.contains(&(*branch.name).to_owned()) {
+            return false;
+        }
+
+        true
+    });
 
     Ok(branches)
 }
@@ -157,14 +185,14 @@ pub fn list_branches(
 fn matches_all(branch: &BranchListing, filter: BranchListingFilter) -> bool {
     let mut conditions = vec![];
     if let Some(applied) = filter.applied {
-        if let Some(vb) = branch.virtual_branch.as_ref() {
+        if let Some(vb) = branch.stack.as_ref() {
             conditions.push(applied == vb.in_workspace);
         } else {
             conditions.push(!applied);
         }
     }
     if let Some(local) = filter.local {
-        conditions.push((branch.has_local || branch.virtual_branch.is_some()) && local);
+        conditions.push((branch.has_local || branch.stack.is_some()) && local);
     }
     conditions.iter().all(|&x| x)
 }
@@ -263,24 +291,20 @@ fn branch_group_to_branch(
     }
 
     // Virtual branch associated with this branch
-    let virtual_branch_reference = virtual_branch.map(|stack| VirtualBranchReference {
-        given_name: stack.name.clone(),
-        id: stack.id,
-        in_workspace: stack.in_workspace,
-        stack_branches: stack
-            .branches()
-            .iter()
-            .filter(|b| !b.archived)
-            .rev()
-            .map(|b| b.name())
-            .cloned()
-            .collect_vec(),
-        pull_requests: stack
-            .branches()
-            .iter()
-            .filter(|b| !b.archived)
-            .filter_map(|b| b.pr_number.map(|pr| (b.name().to_owned(), pr)))
-            .collect(),
+    let virtual_branch_reference = virtual_branch.map(|stack| {
+        let unarchived_branches = stack.unarchived_segments.iter();
+        StackReference {
+            given_name: stack.name.clone(),
+            id: stack.id,
+            in_workspace: stack.in_workspace,
+            branches: unarchived_branches
+                .clone()
+                .map(|b| b.short_name())
+                .collect(),
+            pull_requests: unarchived_branches
+                .filter_map(|b| b.pr_or_mr.map(|pr| (b.short_name().to_owned(), pr)))
+                .collect(),
+        }
     });
 
     let mut remotes: Vec<gix::remote::Name<'static>> = Vec::new();
@@ -290,17 +314,18 @@ fn branch_group_to_branch(
         }
     }
 
-    let has_local = !local_branches.is_empty();
+    // Virtual branches always have local branches
+    let has_local = !local_branches.is_empty() || virtual_branch.is_some();
 
     // The head commit for which we calculate statistics.
     // If there is a virtual branch let's get it's head. Alternatively, pick the first local branch and use it's head.
     // If there are no local branches, pick the first remote branch.
     let head_commit = if let Some(vbranch) = virtual_branch {
-        Some(git2_to_gix_object_id(vbranch.head()).attach(repo))
+        Some(vbranch.head_oid(repo)?)
     } else if let Some(mut branch) = local_branches.into_iter().next() {
-        branch.peel_to_id_in_place_packed(packed).ok()
+        branch.peel_to_id_packed(packed).ok()
     } else if let Some(mut branch) = remote_branches.into_iter().next() {
-        branch.peel_to_id_in_place_packed(packed).ok()
+        branch.peel_to_id_packed(packed).ok()
     } else {
         None
     }
@@ -318,7 +343,7 @@ fn branch_group_to_branch(
     Ok(Some(BranchListing {
         name: identity.to_owned(),
         remotes,
-        virtual_branch: virtual_branch_reference,
+        stack: virtual_branch_reference,
         updated_at: last_modified_ms,
         last_commiter,
         has_local,
@@ -327,11 +352,142 @@ fn branch_group_to_branch(
 }
 
 /// A sum type of branch that can be a plain git branch or a virtual branch
-#[allow(clippy::large_enum_variant)]
 enum GroupBranch<'a> {
     Local(gix::Reference<'a>),
     Remote(gix::Reference<'a>),
-    Virtual(GitButlerBranch),
+    Virtual(GitButlerStack),
+}
+
+/// A type to just keep the parts we currently need.
+#[derive(Debug, Clone)]
+struct GitButlerStack {
+    id: StackId,
+    /// `true` if the stack is applied to the workspace.
+    in_workspace: bool,
+    /// The short name of the top-most segment.
+    name: String,
+    /// The full ref name of the top-most segment.
+    source_refname: Option<gix::refs::FullName>,
+    /// The full ref name of the remote tracking branch of the top-most segment.
+    upstream: Option<but_workspace::ui::ref_info::RemoteTrackingReference>,
+    /// The time at which anything in the stack was last updated.
+    updated_timestamp_ms: u128,
+    // All segments of the stack, as long as they are not archived.
+    // The tip comes first.
+    unarchived_segments: Vec<GitbutlerStackSegment>,
+}
+
+#[derive(Debug, Clone)]
+struct GitbutlerStackSegment {
+    /// The name of the segment, without support for these to be anonymous (which is a problem).
+    tip: gix::refs::FullName,
+    /// The PR or MR associated with it.
+    pr_or_mr: Option<usize>,
+}
+
+impl GitbutlerStackSegment {
+    fn short_name(&self) -> String {
+        self.tip.shorten().to_string()
+    }
+}
+
+impl GitButlerStack {
+    fn try_new(
+        stack: but_workspace::branch::Stack,
+        names: &gix::remote::Names,
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(id) = stack.id else { return Ok(None) };
+        let first_segment = stack.segments.first();
+        Ok(Some(GitButlerStack {
+            id,
+            // The ones we have reachable are never
+            in_workspace: true,
+            name: stack
+                .name()
+                .map(|rn| rn.shorten().to_string())
+                // Hack it - the datastructure isn't suitable and this needs a `gitbutler->but` port.
+                .unwrap_or_default(),
+            source_refname: stack.ref_name().map(|rn| rn.to_owned()),
+            upstream: first_segment
+                .and_then(|s| {
+                    s.remote_tracking_ref_name.as_ref().map(|rn| {
+                        but_workspace::ui::ref_info::RemoteTrackingReference::for_ui(
+                            rn.clone(),
+                            names,
+                        )
+                    })
+                })
+                .transpose()?,
+            updated_timestamp_ms: first_segment
+                .and_then(|s| {
+                    let md = s.metadata.as_ref()?;
+                    Some(md.ref_info.updated_at?.seconds as u128 * 1_000)
+                })
+                .unwrap_or_default(),
+            unarchived_segments: stack
+                .segments
+                .iter()
+                .map(|s| GitbutlerStackSegment {
+                    tip: s.ref_name.clone().unwrap_or_else(|| {
+                        gix::refs::FullName::try_from(
+                            "refs/heads/unnamed-ref-and-we-fake-a-name-fix-me",
+                        )
+                        .expect("known to be valid statically")
+                    }),
+                    pr_or_mr: s.metadata.as_ref().and_then(|md| md.review.pull_request),
+                })
+                .collect(),
+        }))
+    }
+    fn new_from_old(stack: &Stack, names: &gix::remote::Names) -> anyhow::Result<Self> {
+        Ok(GitButlerStack {
+            id: stack.id,
+            in_workspace: stack.in_workspace,
+            name: stack.name.clone(),
+            source_refname: stack
+                .source_refname
+                .as_ref()
+                .and_then(|r| r.to_string().try_into().ok()),
+            upstream: stack
+                .upstream
+                .as_ref()
+                .and_then(|r| {
+                    r.to_string().try_into().ok().map(|rn| {
+                        but_workspace::ui::ref_info::RemoteTrackingReference::for_ui(rn, names)
+                    })
+                })
+                .transpose()?,
+            updated_timestamp_ms: stack.updated_timestamp_ms,
+            unarchived_segments: stack
+                .branches()
+                .iter()
+                // The tip is at the bottom here.
+                .rev()
+                .filter(|s| !s.archived)
+                .map(|s| GitbutlerStackSegment {
+                    tip: s
+                        .full_name()
+                        .expect("full names are always valid, as their short names were valid"),
+                    pr_or_mr: s.pr_number,
+                })
+                .collect(),
+        })
+    }
+}
+
+impl GitButlerStack {
+    /// Return the top-most stack's commit id.
+    fn head_oid<'repo>(&self, repo: &'repo gix::Repository) -> anyhow::Result<gix::Id<'repo>> {
+        let tip_ref = self
+            .unarchived_segments
+            .iter()
+            .map(|s| s.tip.as_ref())
+            .next()
+            .with_context(|| format!("Stack {} didn't have a tip ref name", self.id))?;
+        repo.find_reference(tip_ref)?
+            .try_id()
+            .with_context(|| format!("'{}' was as symbolic reference", tip_ref.shorten()))
+    }
 }
 
 impl fmt::Debug for GroupBranch<'_> {
@@ -350,7 +506,7 @@ impl fmt::Debug for GroupBranch<'_> {
                 )
                 .finish(),
             GroupBranch::Virtual(branch) => formatter
-                .debug_struct("GroupBranch::Virtal")
+                .debug_struct("GroupBranch::Virtual")
                 .field("0", branch)
                 .finish(),
         }
@@ -368,12 +524,20 @@ impl GroupBranch<'_> {
             }
             // The identity of a Virtual branch is derived from the source refname, upstream or the branch given name, in that order
             GroupBranch::Virtual(branch) => {
-                let name_from_source = branch.source_refname.as_ref().and_then(|n| n.branch());
-                let name_from_upstream = branch.upstream.as_ref().map(|n| n.branch());
-                let rich_name = branch.name.clone();
-                let rich_name = normalize_branch_name(&rich_name).ok()?;
-                let identity = name_from_source.unwrap_or(name_from_upstream.unwrap_or(&rich_name));
-                Some(identity.into())
+                let name_from_source = branch.source_refname.as_ref().map(|n| n.shorten());
+                let name_from_upstream = branch
+                    .upstream
+                    .as_ref()
+                    .map(|n| n.display_name.as_str().into());
+
+                // If we have a source refname or upstream, use those directly
+                if let Some(name) = name_from_source.or(name_from_upstream) {
+                    return name.try_into().ok();
+                }
+
+                // Only fall back to the normalized rich name if no source/upstream is available
+                let rich_name = normalize_branch_name(&branch.name).ok()?;
+                Some(rich_name.as_str().into())
             }
         }
     }
@@ -417,7 +581,7 @@ pub struct BranchListingFilter {
 
 /// Represents a branch that exists for the repository
 /// This also combines the concept of a remote, local and virtual branch in order to provide a unified interface for the UI
-/// Branch entry is not meant to contain all of the data a branch can have (e.g. full commit history, all files and diffs, etc.).
+/// Branch entry is not meant to contain all the data a branch can have (e.g. full commit history, all files and diffs, etc.).
 /// It is intended a summary that can be quickly retrieved and displayed in the UI.
 /// For more detailed information, each branch can be queried individually for it's `BranchData`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -430,7 +594,7 @@ pub struct BranchListing {
     #[serde(serialize_with = "gitbutler_serde::as_string_lossy_vec_remote_name")]
     pub remotes: Vec<gix::remote::Name<'static>>,
     /// The branch may or may not have a virtual branch associated with it.
-    pub virtual_branch: Option<VirtualBranchReference>,
+    pub stack: Option<StackReference>,
     /// Timestamp in milliseconds since the branch was last updated.
     /// This includes any commits, uncommited changes or even updates to the branch metadata (e.g. renaming).
     pub updated_at: u128,
@@ -498,7 +662,7 @@ impl From<gix::actor::SignatureRef<'_>> for Author {
 /// Represents a reference to an associated virtual branch
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct VirtualBranchReference {
+pub struct StackReference {
     /// A non-normalized name of the branch, set by the user
     pub given_name: String,
     /// Virtual Branch UUID identifier
@@ -507,8 +671,8 @@ pub struct VirtualBranchReference {
     pub in_workspace: bool,
     /// List of branches that are part of the stack
     /// Ordered from newest to oldest (the most recent branch is first in the list)
-    pub stack_branches: Vec<String>,
-    /// Pull Request numbes by branch name associated with the stack
+    pub branches: Vec<String>,
+    /// Pull Request numbers by branch name associated with the stack
     pub pull_requests: HashMap<String, usize>,
 }
 
@@ -523,7 +687,7 @@ pub fn get_branch_listing_details(
         .map(TryInto::try_into)
         .filter_map(Result::ok)
         .collect();
-    let repo = ctx.gix_repository_minimal()?.for_tree_diffing()?;
+    let repo = ctx.gix_repo_local_only()?.for_tree_diffing()?;
     let branches = list_branches(ctx, None, Some(branch_names))?;
 
     let (default_target_current_upstream_commit_id, default_target_seen_at_last_update) = {
@@ -588,7 +752,7 @@ pub fn get_branch_listing_details(
             .map(|branch| {
                 (
                     branch
-                        .virtual_branch
+                        .stack
                         .as_ref()
                         .and_then(|vb| {
                             vb.in_workspace
@@ -687,7 +851,7 @@ pub fn get_branch_listing_details(
                 number_of_files,
                 authors: authors.into_iter().collect(),
                 number_of_commits: num_commits,
-                virtual_branch: branch.virtual_branch,
+                stack: branch.stack,
             };
             enriched_branches.push(branch_data);
         }
@@ -731,58 +895,5 @@ pub struct BranchListingDetails {
     /// it takes the full list of unique authors, without applying a mailmap.
     pub authors: Vec<Author>,
     /// The branch may or may not have a virtual branch associated with it.
-    pub virtual_branch: Option<VirtualBranchReference>,
-}
-/// Represents a local branch
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchEntry {
-    /// The name of the branch (e.g. `main`, `feature/branch`)
-    pub name: String,
-    /// The head commit of the branch
-    #[serde(with = "gitbutler_serde::oid")]
-    head: git2::Oid,
-    /// The commit base of the branch
-    #[serde(with = "gitbutler_serde::oid")]
-    base: git2::Oid,
-    /// The list of commits associated with the branch
-    pub commits: Vec<CommitEntry>,
-}
-
-/// Represents a local branch
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalBranchEntry {
-    #[serde(flatten)]
-    pub base: BranchEntry,
-}
-
-/// Represents a branch that is from a remote
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteBranchEntry {
-    #[serde(flatten)]
-    pub base: BranchEntry,
-    /// The name of the remote (e.g. `origin`, `upstream` etc.)
-    pub remote_name: String,
-}
-
-/// Commits associated with a branch
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommitEntry {
-    /// The commit sha that it can be referenced by
-    #[serde(with = "gitbutler_serde::oid")]
-    pub id: git2::Oid,
-    /// If the commit is referencing a specific change, this is its change id
-    pub change_id: Option<String>,
-    /// The commit message
-    pub description: BStringForFrontend,
-    /// The timestamp of the commit in milliseconds
-    pub created_at: u128,
-    /// The author of the commit
-    pub authors: Vec<Author>,
-    /// The parent commits of the commit
-    #[serde(with = "gitbutler_serde::oid_vec")]
-    pub parent_ids: Vec<git2::Oid>,
+    pub stack: Option<StackReference>,
 }

@@ -1,16 +1,29 @@
 use crate::utils::{
-    CONTEXT_LINES, commit_from_outcome, commit_whole_files_and_all_hunks_from_workspace,
-    read_only_in_memory_scenario, visualize_commit, visualize_tree, writable_scenario,
-    writable_scenario_with_ssh_key, write_local_config, write_sequence,
+    CONTEXT_LINES, cat_commit, commit_from_outcome,
+    commit_whole_files_and_all_hunks_from_workspace, read_only_in_memory_scenario,
+    visualize_commit, visualize_tree, writable_scenario, writable_scenario_with_ssh_key,
+    write_local_config, write_sequence,
 };
 use but_testsupport::assure_stable_env;
-use but_workspace::commit_engine::{Destination, DiffSpec, HunkHeader};
+use but_workspace::{DiffSpec, HunkHeader, commit_engine::Destination};
 
 #[test]
 fn all_changes_and_renames_to_topmost_commit_no_parent() -> anyhow::Result<()> {
     assure_stable_env();
 
-    let repo = read_only_in_memory_scenario("all-file-types-renamed-and-modified")?;
+    let mut repo = read_only_in_memory_scenario("all-file-types-renamed-and-modified")?;
+    // Change the committer and author dates to be able to tell what it changes.
+    {
+        let mut config = repo.config_snapshot_mut();
+        config.set_value(
+            &gix::config::tree::gitoxide::Commit::COMMITTER_DATE,
+            "946771266 +0600",
+        )?;
+        config.set_value(
+            &gix::config::tree::gitoxide::Commit::AUTHOR_DATE,
+            "946684866 +0600",
+        )?;
+    }
     let head_commit = repo.rev_parse_single("HEAD")?;
     insta::assert_snapshot!(but_testsupport::visualize_tree(head_commit.object()?.peel_to_tree()?.id()), @r#"
     3fd29f0
@@ -18,18 +31,30 @@ fn all_changes_and_renames_to_topmost_commit_no_parent() -> anyhow::Result<()> {
     ├── file:100644:3aac70f "5\n6\n7\n8\n"
     └── link:120000:c4c364c "nonexisting-target"
     "#);
+    insta::assert_snapshot!(cat_commit(head_commit)?, @r"
+    tree 3fd29f0ca55ee4dc3ea6bf02a761c15fd6dc8428
+    author author <author@example.com> 946684800 +0000
+    committer committer <committer@example.com> 946771200 +0000
+    gitbutler-headers-version 2
+    gitbutler-change-id 00000000-0000-0000-0000-000000003333
+
+    init
+    ");
     let outcome = commit_whole_files_and_all_hunks_from_workspace(
         &repo,
-        Destination::AmendCommit(head_commit.into()),
+        Destination::AmendCommit {
+            commit_id: head_commit.into(),
+            new_message: Some("init: amended".into()),
+        },
     )?;
     insta::assert_debug_snapshot!(&outcome, @r"
     CreateCommitOutcome {
         rejected_specs: [],
         new_commit: Some(
-            Sha1(7d6c00efe8bf6abb4db3952325e0cf71add9a873),
+            Sha1(e69a4dfd9ef6d55fd4e49f801612fbe061677adb),
         ),
         changed_tree_pre_cherry_pick: Some(
-            Sha1(0236fb167942f3665aa348c514e8d272a6581ad5),
+            Sha1(e56fc9bacdd11ebe576b5d96d21127c423698126),
         ),
         references: [],
         rebase_output: None,
@@ -38,17 +63,23 @@ fn all_changes_and_renames_to_topmost_commit_no_parent() -> anyhow::Result<()> {
     ");
     let tree = visualize_tree(&repo, &outcome)?;
     insta::assert_snapshot!(tree, @r#"
-    0236fb1
-    ├── executable-renamed:100755:94ebaf9 "1\n2\n3\n4\n"
-    ├── file-renamed:100644:66f816c "5\n6\n7\n8\n9\n"
+    e56fc9b
+    ├── executable-renamed:100755:8a1218a "1\n2\n3\n4\n5\n"
+    ├── file-renamed:100644:c5c4315 "5\n6\n7\n8\n9\n10\n"
     └── link-renamed:120000:94e4e07 "other-nonexisting-target"
     "#);
-    insta::assert_snapshot!(visualize_commit(&repo, &outcome)?, @r"
-    tree 0236fb167942f3665aa348c514e8d272a6581ad5
-    author author <author@example.com> 946684800 +0000
-    committer committer (From Env) <committer@example.com> 946771200 +0000
 
-    init
+    // It adjusts both the author and the committer date.
+    // It does, however, leave the change-id as it's considered the ID of the commit itself,
+    // which thus should never be removed.
+    insta::assert_snapshot!(visualize_commit(&repo, &outcome)?, @r"
+    tree e56fc9bacdd11ebe576b5d96d21127c423698126
+    author author <author@example.com> 946684866 +0600
+    committer committer (From Env) <committer@example.com> 946771266 +0600
+    gitbutler-headers-version 2
+    gitbutler-change-id 00000000-0000-0000-0000-000000003333
+
+    init: amended
     ");
 
     Ok(())
@@ -63,13 +94,17 @@ fn all_aspects_of_amended_commit_are_copied() -> anyhow::Result<()> {
     write_sequence(&repo, "file", [(40, 70)])?;
     let outcome = commit_whole_files_and_all_hunks_from_workspace(
         &repo,
-        Destination::AmendCommit(repo.rev_parse_single("merge")?.detach()),
+        Destination::AmendCommit {
+            commit_id: repo.rev_parse_single("merge")?.detach(),
+            new_message: None,
+        },
     )?;
     let tree = visualize_tree(&repo, &outcome)?;
     insta::assert_snapshot!(tree, @r#"
     5bbee6d
     └── file:100644:1c9325b "40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64\n65\n66\n67\n68\n69\n70\n"
     "#);
+    // We do not add a change-id to assure we operate correctly when doing similarity checks.
     insta::assert_snapshot!(visualize_commit(&repo, &outcome)?, @r"
     tree 5bbee6d0219923e795f7b0818dda2f33f16278b4
     parent 91ef6f6fc0a8b97fb456886c1cc3b2a3536ea2eb
@@ -89,11 +124,14 @@ fn new_file_and_deletion_onto_merge_commit() -> anyhow::Result<()> {
     let (repo, _tmp) = writable_scenario("merge-with-two-branches-line-offset");
     // Rewrite the entire file, which is fine as we rewrite/amend the base-commit itself.
     write_sequence(&repo, "new-file", [(10, None)])?;
-    std::fs::remove_file(repo.workdir().expect("non-bare").join("file"))?;
+    std::fs::remove_file(repo.workdir_path("file").expect("non-bare"))?;
 
     let outcome = commit_whole_files_and_all_hunks_from_workspace(
         &repo,
-        Destination::AmendCommit(repo.rev_parse_single("merge")?.detach()),
+        Destination::AmendCommit {
+            commit_id: repo.rev_parse_single("merge")?.detach(),
+            new_message: None,
+        },
     )?;
     let tree = visualize_tree(&repo, &outcome)?;
     insta::assert_snapshot!(tree, @r#"
@@ -109,10 +147,13 @@ fn make_a_file_empty() -> anyhow::Result<()> {
 
     let (repo, _tmp) = writable_scenario("merge-with-two-branches-line-offset");
     // Empty the file
-    std::fs::write(repo.workdir().expect("non-bare").join("file"), "")?;
+    std::fs::write(repo.workdir_path("file").expect("non-bare"), "")?;
     let outcome = commit_whole_files_and_all_hunks_from_workspace(
         &repo,
-        Destination::AmendCommit(repo.rev_parse_single("merge")?.detach()),
+        Destination::AmendCommit {
+            commit_id: repo.rev_parse_single("merge")?.detach(),
+            new_message: None,
+        },
     )?;
     let tree = visualize_tree(&repo, &outcome)?;
     insta::assert_snapshot!(tree, @r#"
@@ -129,11 +170,14 @@ fn new_file_and_deletion_onto_merge_commit_with_hunks() -> anyhow::Result<()> {
     let (repo, _tmp) = writable_scenario("merge-with-two-branches-line-offset");
     // Rewrite the entire file, which is fine as we rewrite/amend the base-commit itself.
     write_sequence(&repo, "new-file", [(10, None)])?;
-    std::fs::remove_file(repo.workdir().expect("non-bare").join("file"))?;
+    std::fs::remove_file(repo.workdir_path("file").expect("non-bare"))?;
 
     let outcome = but_workspace::commit_engine::create_commit(
         &repo,
-        Destination::AmendCommit(repo.rev_parse_single("merge")?.detach()),
+        Destination::AmendCommit {
+            commit_id: repo.rev_parse_single("merge")?.detach(),
+            new_message: None,
+        },
         None,
         vec![
             DiffSpec {
@@ -179,8 +223,13 @@ fn signatures_are_redone() -> anyhow::Result<()> {
 
     // Rewrite everything for amending on top.
     write_sequence(&repo, "file", [(40, 60)])?;
-    let outcome =
-        commit_whole_files_and_all_hunks_from_workspace(&repo, Destination::AmendCommit(head_id))?;
+    let outcome = commit_whole_files_and_all_hunks_from_workspace(
+        &repo,
+        Destination::AmendCommit {
+            commit_id: head_id,
+            new_message: None,
+        },
+    )?;
 
     let new_commit = commit_from_outcome(&repo, &outcome)?;
     let new_signature = new_commit
@@ -203,8 +252,13 @@ fn signatures_are_redone() -> anyhow::Result<()> {
     repo.config_snapshot_mut()
         .set_raw_value(&"gitbutler.signCommits", "false")?;
     write_local_config(&repo)?;
-    let outcome =
-        commit_whole_files_and_all_hunks_from_workspace(&repo, Destination::AmendCommit(head_id))?;
+    let outcome = commit_whole_files_and_all_hunks_from_workspace(
+        &repo,
+        Destination::AmendCommit {
+            commit_id: head_id,
+            new_message: None,
+        },
+    )?;
     let new_commit = commit_from_outcome(&repo, &outcome)?;
     assert!(
         new_commit.extra_headers().pgp_signature().is_none(),

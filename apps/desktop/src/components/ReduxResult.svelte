@@ -1,50 +1,115 @@
-<script lang="ts" generics="A">
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import { isErrorlike } from '@gitbutler/ui/utils/typeguards';
-	import { QueryStatus } from '@reduxjs/toolkit/query';
-	import type { Snippet } from 'svelte';
-
-	type Result<A> = {
-		data?: A;
-		status: QueryStatus;
-		error?: unknown;
-	};
-
-	type Props<A> = {
-		result: Result<A> | undefined;
-		children: Snippet<[A]>;
-		empty?: Snippet;
-	};
-
-	// eslint-disable-next-line no-undef
-	const { result, children }: Props<A> = $props();
+<script lang="ts" module>
+	type A = unknown;
+	type B = string | undefined;
 </script>
 
-{#if result?.status === 'fulfilled'}
-	<!-- Show empty message if data is an empty array. -->
-	{#if result.data !== undefined}
-		{@render children(result.data)}
+<script lang="ts" generics="A, B extends string | undefined">
+	import InfoMessage from '$components/InfoMessage.svelte';
+	import { isParsedError } from '$lib/error/parser';
+
+	import { Icon } from '@gitbutler/ui';
+	import { QueryStatus } from '@reduxjs/toolkit/query';
+	import type { Result } from '$lib/state/helpers';
+	import type { Snippet } from 'svelte';
+
+	type Env<B> = {
+		projectId: string;
+		stackId: B;
+	};
+
+	type Props<A, B extends string | undefined> = {
+		result: Result<A> | undefined;
+		projectId: string;
+		children: Snippet<[A, Env<B>]>;
+		loading?: Snippet<[A | undefined]>;
+		error?: Snippet<[unknown]>;
+		onerror?: (err: unknown) => void;
+	} & (B extends undefined ? { stackId?: B } : { stackId: B });
+
+	const props: Props<A, B> = $props();
+
+	type Display = {
+		result: Result<A> | undefined;
+		env: Env<B>;
+	};
+
+	let cache: Display | undefined;
+
+	const display = $derived.by<Display>(() => {
+		const env = { projectId: props.projectId, stackId: props.stackId as B };
+		if (props.result?.error) {
+			return { result: props.result, env };
+		}
+
+		// This needs to test for 'undefined' specifically, enabling 'null' as a valid data value.
+		if (props.result?.data !== undefined) {
+			cache = { result: props.result, env };
+			return cache;
+		}
+
+		if (cache) {
+			return cache;
+		}
+
+		return { result: props.result, env };
+	});
+
+	$effect(() => {
+		if (props.onerror && display.result?.error !== undefined) {
+			props.onerror(display.result.error);
+		}
+	});
+</script>
+
+{#snippet errorComponent(error: unknown)}
+	{#if props.error}
+		{@render props.error(error)}
+	{:else if isParsedError(error)}
+		<div class="redux-result__error-wrapper">
+			<InfoMessage error={error.message} style="error">
+				{#snippet title()}
+					{error.name}
+				{/snippet}
+				{#snippet content()}
+					An asynchronous operation failed.
+				{/snippet}
+			</InfoMessage>
+		</div>
 	{/if}
-{:else if result?.status === 'pending'}
-	<div class="loading-spinner">
-		<Icon name="spinner" />
-	</div>
-{:else if result?.status === 'rejected'}
-	{#if isErrorlike(result.error)}
-		{result.error.message}
+{/snippet}
+
+{#snippet loadingComponent(data: A | undefined, status: QueryStatus)}
+	{#if props.loading}
+		{@render props.loading(data)}
 	{:else}
-		{String(result.error)}
+		<div class="text-12 loading-spinner">
+			<Icon name="spinner" />
+			<span>{status}</span>
+		</div>
 	{/if}
-{:else if status === 'uninitialized'}
-	Uninitialized...
+{/snippet}
+
+{#if display.result?.error}
+	{@const error = display.result.error}
+	{@render errorComponent(error)}
+{:else if display.result?.data !== undefined}
+	{@render props.children(display.result.data, display.env)}
+{:else if display.result?.status === 'pending' || display.result?.status === 'uninitialized'}
+	{@render loadingComponent(display.result.data, display.result.status)}
 {/if}
 
 <style>
 	.loading-spinner {
-		position: absolute;
-		left: 50%;
-		transform: translateX(-50%);
+		display: flex;
 		z-index: var(--z-lifted);
-		margin-top: 24px;
+		position: relative;
+		align-items: center;
+		gap: 8px;
+		color: var(--clr-text-2);
+	}
+
+	.redux-result__error-wrapper {
+		width: 100%;
+		padding: 2px;
 	}
 </style>

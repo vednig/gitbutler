@@ -1,19 +1,58 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use gitbutler_error::error;
 
 use super::{storage, storage::UpdateRequest, Project, ProjectId};
-use crate::AuthKey;
+use crate::{project::AddProjectOutcome, AuthKey};
 
-#[derive(Clone)]
-pub struct Controller {
+#[derive(Clone, Debug)]
+pub(crate) struct Controller {
     local_data_dir: PathBuf,
     projects_storage: storage::Storage,
 }
 
 impl Controller {
-    pub fn from_path(path: impl Into<PathBuf>) -> Self {
+    /// Assure we can list projects, and if not possibly existing projects files will be renamed, and an error is produced early.
+    pub(crate) fn assure_app_can_startup_or_fix_it(
+        &self,
+        projects: Result<Vec<Project>>,
+    ) -> Result<Vec<Project>> {
+        match projects {
+            Ok(works) => Ok(works),
+            Err(probably_file_load_err) => {
+                let projects_path = self.local_data_dir.join("projects.json");
+                let max_attempts = 255;
+                for round in 1..max_attempts {
+                    let backup_path = self
+                        .local_data_dir
+                        .join(format!("projects.json.maybe-broken-{round:02}"));
+                    if backup_path.is_file() {
+                        continue;
+                    }
+
+                    if let Err(err) = std::fs::rename(&projects_path, &backup_path) {
+                        tracing::error!(
+                            "Failed to rename {} to {} - application may fail to startup: {err}",
+                            projects_path.display(),
+                            backup_path.display()
+                        );
+                    }
+
+                    bail!(
+                        "Could not open projects file at '{}'.\nIt was moved to {}.\nReopen or refresh the app to start fresh.\nError was: {probably_file_load_err}",
+                        projects_path.display(),
+                        backup_path.display()
+                    );
+                }
+                bail!("There were already {max_attempts} backup project files - giving up")
+            }
+        }
+    }
+}
+
+impl Controller {
+    pub(crate) fn from_path(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         Self {
             projects_storage: storage::Storage::from_path(&path),
@@ -21,58 +60,70 @@ impl Controller {
         }
     }
 
-    pub fn add<P: AsRef<Path>>(&self, path: P) -> Result<Project> {
+    pub(crate) fn add<P: AsRef<Path>>(&self, path: P) -> Result<AddProjectOutcome> {
         let path = path.as_ref();
         let all_projects = self
             .projects_storage
             .list()
             .context("failed to list projects from storage")?;
-        if all_projects.iter().any(|project| project.path == path) {
-            bail!("project already exists");
+        if let Some(existing_project) = all_projects.iter().find(|project| project.path == path) {
+            return Ok(AddProjectOutcome::AlreadyExists(
+                existing_project.to_owned(),
+            ));
         }
         if !path.exists() {
-            bail!("path not found");
+            return Ok(AddProjectOutcome::PathNotFound);
         }
         if !path.is_dir() {
-            bail!("not a directory");
+            return Ok(AddProjectOutcome::NotADirectory);
         }
         match gix::open_opts(path, gix::open::Options::isolated()) {
             Ok(repo) if repo.is_bare() => {
-                bail!("bare repositories are unsupported");
+                return Ok(AddProjectOutcome::BareRepository);
             }
             Ok(repo) if repo.worktree().is_some_and(|wt| !wt.is_main()) => {
                 if path.join(".git").is_file() {
-                    bail!("can only work in main worktrees");
+                    return Ok(AddProjectOutcome::NonMainWorktree);
                 };
             }
-            Ok(repo) => {
-                match repo.workdir() {
-                    None => bail!("Cannot add non-bare repositories without a workdir"),
-                    Some(wd) => {
-                        if !wd.join(".git").is_dir() {
-                            bail!("A git-repository without a `.git` directory cannot currently be added");
-                        }
+            Ok(repo) => match repo.workdir() {
+                None => {
+                    return Ok(AddProjectOutcome::NoWorkdir);
+                }
+                Some(wd) => {
+                    if !wd.join(".git").is_dir() {
+                        return Ok(AddProjectOutcome::NoDotGitDirectory);
                     }
                 }
-            }
+            },
             Err(err) => {
-                return Err(anyhow::Error::from(err))
-                    .context(error::Context::new("must be a Git repository"));
+                return Ok(AddProjectOutcome::NotAGitRepository(err.to_string()));
             }
         }
 
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = ProjectId::generate();
 
-        // title is the base name of the file
-        let title = path
-            .iter()
+        // Resolve the path first to get the actual directory name
+        let resolved_path = gix::path::realpath(path)?;
+        let title_is_not_normal_component = path
+            .components()
             .next_back()
-            .map_or_else(|| id.clone(), |p| p.to_str().unwrap().to_string());
+            .is_none_or(|c| !matches!(c, Component::Normal(_)));
+        let path_for_title = if title_is_not_normal_component {
+            &resolved_path
+        } else {
+            path
+        };
+
+        let title = path_for_title.file_name().map_or_else(
+            || id.to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
 
         let project = Project {
-            id: ProjectId::generate(),
+            id,
             title,
-            path: gix::path::realpath(path)?,
+            path: resolved_path,
             api: None,
             ..Default::default()
         };
@@ -86,10 +137,10 @@ impl Controller {
             tracing::error!(project_id = %project.id, ?error, "failed to create {:?} on project add", project.gb_dir());
         }
 
-        Ok(project)
+        Ok(AddProjectOutcome::Added(project))
     }
 
-    pub fn update(&self, project: &UpdateRequest) -> Result<Project> {
+    pub(crate) fn update(&self, project: &UpdateRequest) -> Result<Project> {
         #[cfg(not(windows))]
         if let Some(AuthKey::Local {
             private_key_path, ..
@@ -113,8 +164,6 @@ impl Controller {
             }
         }
 
-        // FIXME(qix-): On windows, we have to force to system executable.
-        // FIXME(qix-): This is a hack for now, and will be smoothed over in the future.
         #[cfg(windows)]
         let project_owned = {
             let mut project = project.clone();
@@ -128,21 +177,21 @@ impl Controller {
         self.projects_storage.update(project)
     }
 
-    pub fn get(&self, id: ProjectId) -> Result<Project> {
+    pub(crate) fn get(&self, id: ProjectId) -> Result<Project> {
         self.get_inner(id, false)
     }
 
     /// Only get the project information. No state validation is done.
     /// This is intended to be used only when updating the path of a missing project.
-    pub fn get_raw(&self, id: ProjectId) -> Result<Project> {
+    pub(crate) fn get_raw(&self, id: ProjectId) -> Result<Project> {
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut project = self.projects_storage.get(id)?;
+        let project = self.projects_storage.get(id)?;
         Ok(project)
     }
 
     /// Like [`Self::get()`], but will assure the project still exists and is valid by
     /// opening a git repository. This should only be done for critical points in time.
-    pub fn get_validated(&self, id: ProjectId) -> Result<Project> {
+    pub(crate) fn get_validated(&self, id: ProjectId) -> Result<Project> {
         self.get_inner(id, true)
     }
 
@@ -178,7 +227,6 @@ impl Controller {
             }
         }
 
-        // FIXME(qix-): On windows, we have to force to system executable
         #[cfg(windows)]
         {
             project.preferred_key = AuthKey::SystemExecutable;
@@ -187,11 +235,11 @@ impl Controller {
         Ok(project)
     }
 
-    pub fn list(&self) -> Result<Vec<Project>> {
+    pub(crate) fn list(&self) -> Result<Vec<Project>> {
         self.projects_storage.list()
     }
 
-    pub fn delete(&self, id: ProjectId) -> Result<()> {
+    pub(crate) fn delete(&self, id: ProjectId) -> Result<()> {
         let Some(project) = self.projects_storage.try_get(id)? else {
             return Ok(());
         };
@@ -213,7 +261,7 @@ impl Controller {
         Ok(())
     }
 
-    pub fn project_metadata_dir(&self, id: ProjectId) -> PathBuf {
+    fn project_metadata_dir(&self, id: ProjectId) -> PathBuf {
         self.local_data_dir.join("projects").join(id.to_string())
     }
 }

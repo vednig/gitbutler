@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { getContext } from '$lib/context';
 	import Loading from '$lib/network/Loading.svelte';
-	import { ProjectService } from '$lib/organizations/projectService';
+	import { PROJECT_SERVICE } from '$lib/organizations/projectService';
 	import { getProjectByRepositoryId } from '$lib/organizations/projectsPreview.svelte';
 	import { ShareLevel } from '$lib/permissions';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import DropDownButton from '@gitbutler/ui/DropDownButton.svelte';
+	import { inject } from '@gitbutler/core/context';
+	import { ContextMenuItem, ContextMenuSection, DropdownButton } from '@gitbutler/ui';
 
 	type Props = {
 		repositoryId: string;
@@ -14,7 +12,7 @@
 
 	const { repositoryId }: Props = $props();
 
-	const projectService = getContext(ProjectService);
+	const projectService = inject(PROJECT_SERVICE);
 
 	const project = $derived(getProjectByRepositoryId(repositoryId));
 
@@ -43,13 +41,13 @@
 		}
 	}
 
-	let dropDownButton = $state<DropDownButton>();
+	let dropDownButton = $state<DropdownButton>();
 	let dropDownEnabled = $state(true);
 </script>
 
 <Loading loadable={project.current}>
 	{#snippet children(project)}
-		<DropDownButton bind:this={dropDownButton} loading={!dropDownEnabled} kind="outline">
+		<DropdownButton bind:this={dropDownButton} loading={!dropDownEnabled} kind="outline">
 			{options.find((option) => option.key === project.permissions.shareLevel)?.label}
 
 			{#snippet contextMenuSlot()}
@@ -63,6 +61,6 @@
 					{/each}
 				</ContextMenuSection>
 			{/snippet}
-		</DropDownButton>
+		</DropdownButton>
 	{/snippet}
 </Loading>

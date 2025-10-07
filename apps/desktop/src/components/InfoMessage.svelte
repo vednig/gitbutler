@@ -1,11 +1,12 @@
 <script lang="ts" module>
 	import type { ComponentColorType } from '@gitbutler/ui/utils/colorTypes';
-	export type MessageStyle = Exclude<ComponentColorType, 'ghost' | 'purple'>;
+	export type MessageStyle = 'info' | 'warning' | 'error' | 'success';
 </script>
 
 <script lang="ts">
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
+	import { Button, Icon } from '@gitbutler/ui';
+	import { copyToClipboard } from '@gitbutler/ui/utils/clipboard';
+
 	import type iconsJson from '@gitbutler/ui/data/icons.json';
 	import type { Snippet } from 'svelte';
 
@@ -19,71 +20,85 @@
 		filled?: boolean;
 		primaryLabel?: string | undefined;
 		primaryIcon?: IconName | undefined;
+		primaryTestId?: string | undefined;
 		primaryAction?: () => void;
 		secondaryLabel?: string | undefined;
 		secondaryIcon?: IconName | undefined;
+		secondaryTestId?: string | undefined;
 		secondaryAction?: () => void;
+		tertiaryLabel?: string | undefined;
+		tertiaryTestId?: string | undefined;
+		tertiaryIcon?: IconName | undefined;
+		tertiaryAction?: () => void;
 		shadow?: boolean;
 		error?: string | undefined;
 		title?: Snippet;
 		content?: Snippet;
+		testId?: string;
 	}
 
 	const {
-		icon: iconName = undefined,
-		style = 'neutral',
+		icon: iconName,
+		style = 'info',
 		outlined = true,
 		filled = false,
 		primaryLabel = '',
-		primaryIcon = undefined,
+		primaryIcon,
+		primaryTestId,
 		primaryAction,
 		secondaryLabel = '',
-		secondaryIcon = undefined,
+		secondaryIcon,
+		secondaryTestId,
 		secondaryAction,
+		tertiaryLabel = '',
+		tertiaryIcon,
+		tertiaryTestId,
+		tertiaryAction,
 		shadow = false,
-		error = undefined,
+		error,
 		title,
-		content
+		content,
+		testId
 	}: Props = $props();
 
 	const iconMap: { [Key in MessageStyle]: IconName } = {
-		neutral: 'info',
-		pop: 'info',
+		info: 'info',
 		warning: 'warning',
 		error: 'error',
 		success: 'success'
 	};
 
 	const iconColorMap: { [Key in MessageStyle]: IconColor } = {
-		neutral: 'pop',
-		pop: 'pop',
+		info: 'pop',
 		warning: 'warning',
 		error: 'error',
 		success: 'success'
 	};
 
 	const primaryButtonMap: { [Key in MessageStyle]: ComponentColorType } = {
-		neutral: 'pop',
-		pop: 'pop',
+		info: 'pop',
 		warning: 'warning',
 		error: 'error',
 		success: 'pop'
 	};
 
-	const resolvedIconName = iconName ?? (iconMap[style] as IconName);
+	const resolvedIconName = $derived(iconName ?? (iconMap[style] as IconName));
 </script>
 
 <div
+	data-testid={testId}
 	class="info-message {style}"
 	class:has-border={outlined}
 	class:has-background={filled}
 	class:shadow
 >
-	<Icon name={resolvedIconName} color={iconColorMap[style]} />
+	<div class="info-message__icon">
+		<Icon name={resolvedIconName} color={iconColorMap[style]} />
+	</div>
 	<div class="info-message__inner">
 		<div class="info-message__content">
 			{#if title}
-				<div class="info-message__title text-13 text-body text-semibold">
+				<div class="info-message__title text-13 text-body text-bold">
 					{@render title()}
 				</div>
 			{/if}
@@ -96,15 +111,35 @@
 		</div>
 
 		{#if error}
-			<code class="info-message__error-block">
+			<code class="info-message__error-block scrollbar">
 				{error}
 			</code>
 		{/if}
 
 		{#if primaryLabel || secondaryLabel}
 			<div class="info-message__actions">
+				{#if error}
+					<Button kind="ghost" onclick={() => copyToClipboard(error)} icon="copy-small">
+						Copy error message
+					</Button>
+				{/if}
+				{#if tertiaryLabel}
+					<Button
+						kind="outline"
+						testId={tertiaryTestId}
+						onclick={() => tertiaryAction?.()}
+						icon={tertiaryIcon}
+					>
+						{tertiaryLabel}
+					</Button>
+				{/if}
 				{#if secondaryLabel}
-					<Button kind="outline" onclick={() => secondaryAction?.()} icon={secondaryIcon}>
+					<Button
+						kind="outline"
+						testId={secondaryTestId}
+						onclick={() => secondaryAction?.()}
+						icon={secondaryIcon}
+					>
 						{secondaryLabel}
 					</Button>
 				{/if}
@@ -113,6 +148,7 @@
 						style={primaryButtonMap[style]}
 						onclick={() => primaryAction?.()}
 						icon={primaryIcon}
+						testId={primaryTestId}
 					>
 						{primaryLabel}
 					</Button>
@@ -124,22 +160,21 @@
 
 <style lang="postcss">
 	.info-message {
-		color: var(--clr-scale-ntrl-0);
 		display: flex;
+		width: 100%;
 		padding: 14px;
-		border-radius: var(--radius-m);
 		gap: 12px;
+		border-radius: var(--radius-m);
 		background-color: var(--clr-bg-1);
-		transition:
-			background-color var(--transition-slow),
-			border-color var(--transition-slow);
+		color: var(--clr-scale-ntrl-0);
+		transition: background-color var(--transition-slow);
 	}
 	.info-message__inner {
 		display: flex;
 		flex-grow: 1;
 		flex-direction: column;
+		overflow: hidden;
 		gap: 12px;
-		overflow-x: hidden;
 	}
 	.info-message__content {
 		display: flex;
@@ -147,10 +182,15 @@
 		gap: 6px;
 		user-select: text;
 	}
+	.info-message__icon {
+		display: flex;
+		flex-shrink: 0;
+		padding: 2px 0;
+	}
 	.info-message__actions {
 		display: flex;
-		gap: 6px;
 		justify-content: flex-end;
+		gap: 6px;
 	}
 	.info-message__text {
 		&:empty {
@@ -158,19 +198,12 @@
 		}
 	}
 
-	.info-message__text :global(pre) {
-		white-space: pre-wrap;
-	}
-
 	/* MODIFIERS */
-	.neutral {
+	.info {
 		border: 0 solid var(--clr-border-2);
 	}
 	.error {
 		border: 0 solid var(--clr-scale-err-60);
-	}
-	.pop {
-		border: 0 solid var(--clr-scale-pop-50);
 	}
 	.warning {
 		border: 0 solid var(--clr-scale-warn-60);
@@ -183,28 +216,20 @@
 	}
 
 	/* OUTLINED */
-
 	.has-border {
 		border-width: 1px;
 	}
 
 	.has-background {
-		&.neutral {
+		&.info {
 			background-color: var(--clr-bg-2);
 		}
-
 		&.error {
 			background-color: var(--clr-theme-err-bg-muted);
 		}
-
-		&.pop {
-			background-color: var(--clr-theme-pop-bg-muted);
-		}
-
 		&.warning {
 			background-color: var(--clr-theme-warn-bg-muted);
 		}
-
 		&.success {
 			background-color: var(--clr-theme-succ-bg-muted);
 		}
@@ -212,24 +237,19 @@
 
 	/* ERROR BLOCK */
 	.info-message__error-block {
-		user-select: auto;
-		padding: 4px 8px;
-		overflow-x: auto;
+		padding: 10px 10px 0;
+		overflow-x: scroll;
+		border-radius: var(--radius-s);
 		background-color: var(--clr-scale-err-90);
 		color: var(--clr-scale-err-10);
-		border-radius: var(--radius-s);
 		font-size: 12px;
-
-		/* scrollbar */
-		&::-webkit-scrollbar {
-			display: none;
-		}
+		white-space: pre;
+		user-select: text;
 
 		/* selection */
 		&::selection {
 			background-color: var(--clr-scale-err-80);
 		}
-
 		/* empty */
 		&:empty {
 			display: none;
@@ -238,15 +258,15 @@
 
 	/* rendered markdown requires global */
 	:global(.info-message__text a) {
-		cursor: pointer;
 		text-decoration: underline;
 		word-break: break-all; /* allow long links to wrap */
+		cursor: pointer;
 	}
 	:global(.info-message__text p:not(:last-child)) {
 		margin-bottom: 10px;
 	}
 	:global(.info-message__text ul) {
-		list-style-type: circle;
 		padding: 0 0 0 16px;
+		list-style-type: circle;
 	}
 </style>

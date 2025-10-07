@@ -1,10 +1,8 @@
 <script lang="ts">
-	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
-	import { getContext } from '@gitbutler/shared/context';
+	import { SHORTCUT_SERVICE } from '$lib/shortcuts/shortcutService';
+	import { inject } from '@gitbutler/core/context';
 
-	const shortcutService = getContext(ShortcutService);
+	const shortcutService = inject(SHORTCUT_SERVICE);
 
-	shortcutService.on('reload', () => {
-		location.reload();
-	});
+	$effect(() => shortcutService.on('reload', () => location.reload()));
 </script>

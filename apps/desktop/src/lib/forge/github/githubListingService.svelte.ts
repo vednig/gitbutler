@@ -1,57 +1,49 @@
 import { ghQuery } from '$lib/forge/github/ghQuery';
 import { ghResponseToInstance } from '$lib/forge/github/types';
 import { createSelectByIds } from '$lib/state/customSelectors';
-import { ReduxTag } from '$lib/state/tags';
-import { reactive } from '@gitbutler/shared/storeUtils';
+import { providesList, ReduxTag } from '$lib/state/tags';
+import { isDefined } from '@gitbutler/ui/utils/typeguards';
 import { createEntityAdapter, type EntityState } from '@reduxjs/toolkit';
 import type { ForgeListingService } from '$lib/forge/interface/forgeListingService';
 import type { PullRequest } from '$lib/forge/interface/types';
-import type { ProjectMetrics } from '$lib/metrics/projectMetrics';
 import type { GitHubApi } from '$lib/state/clientState.svelte';
 
 export class GitHubListingService implements ForgeListingService {
 	private api: ReturnType<typeof injectEndpoints>;
 
-	constructor(
-		gitHubApi: GitHubApi,
-		private projectMetrics?: ProjectMetrics
-	) {
+	constructor(gitHubApi: GitHubApi) {
 		this.api = injectEndpoints(gitHubApi);
 	}
 
 	list(projectId: string, pollingInterval?: number) {
-		const result = $derived(
-			this.api.endpoints.listPrs.useQuery(projectId, {
-				transform: (result) => prSelectors.selectAll(result),
-				subscriptionOptions: { pollingInterval }
-			})
-		);
-		$effect(() => {
-			const items = result.current.data;
-			if (items) {
-				this.projectMetrics?.setMetric(projectId, 'pr_count', items.length);
-			}
+		return this.api.endpoints.listPrs.useQuery(projectId, {
+			transform: (result) => prSelectors.selectAll(result),
+			subscriptionOptions: { pollingInterval }
 		});
-		return result;
 	}
 
 	getByBranch(projectId: string, branchName: string) {
-		const result = $derived(
-			this.api.endpoints.listPrs.useQuery(projectId, {
-				transform: (result) => prSelectors.selectById(result, branchName)
-			})
-		);
-		return result;
+		return this.api.endpoints.listPrs.useQuery(projectId, {
+			transform: (result) => {
+				return prSelectors.selectById(result, branchName);
+			}
+		});
 	}
 
 	filterByBranch(projectId: string, branchName: string[]) {
-		const result = $derived(
-			this.api.endpoints.listPrs.useQueryState(projectId, {
-				transform: (result) => prSelectors.selectByIds(result, branchName)
-			})
+		return this.api.endpoints.listPrs.useQueryState(projectId, {
+			transform: (result) => prSelectors.selectByIds(result, branchName)
+		});
+	}
+
+	async fetchByBranch(projectId: string, branchNames: string[]) {
+		const results = await Promise.all(
+			branchNames.map((branch) =>
+				this.api.endpoints.listPrsByBranch.fetch({ projectId, branchName: branch })
+			)
 		);
-		const data = $derived(result.current.data);
-		return reactive(() => data || []);
+
+		return results.filter(isDefined) ?? [];
 	}
 
 	async refresh(projectId: string): Promise<void> {
@@ -64,22 +56,57 @@ function injectEndpoints(api: GitHubApi) {
 		endpoints: (build) => ({
 			listPrs: build.query<EntityState<PullRequest, string>, string>({
 				queryFn: async (_, api) => {
-					const result = await ghQuery({
-						domain: 'pulls',
-						action: 'list',
-						extra: api.extra
-					});
-					if (result.data) {
-						return {
-							data: prAdapter.addMany(
-								prAdapter.getInitialState(),
-								result.data.map((item) => ghResponseToInstance(item))
-							)
-						};
+					const result = await ghQuery<'pulls', 'list', 'required'>(
+						async (octokit, repository) => ({
+							data: await octokit.paginate(octokit.rest.pulls.list, repository)
+						}),
+						api.extra,
+						'required'
+					);
+
+					if (result.error) {
+						return { error: result.error };
 					}
-					return result;
+
+					return {
+						data: prAdapter.addMany(
+							prAdapter.getInitialState(),
+							result.data.map((item) => ghResponseToInstance(item))
+						)
+					};
 				},
-				providesTags: [ReduxTag.PullRequests]
+				providesTags: [providesList(ReduxTag.PullRequests)]
+			}),
+			listPrsByBranch: build.query<PullRequest | null, { projectId: string; branchName: string }>({
+				queryFn: async ({ branchName }, api) => {
+					const result = await ghQuery<'pulls', 'list', 'required'>(
+						async (octokit, repository) => ({
+							data: await octokit.paginate(octokit.rest.pulls.list, {
+								...repository,
+								head: `${repository.owner}:${branchName}`
+							})
+						}),
+						api.extra,
+						'required'
+					);
+
+					if (result.error) {
+						return { error: result.error };
+					}
+
+					if (result.data.length === 0) {
+						return { data: null };
+					}
+
+					if (result.data.length > 1) {
+						return { error: new Error(`Multiple pull requests found for branch ${branchName}`) };
+					}
+
+					const prData = result.data[0]!;
+
+					const pr = ghResponseToInstance(prData);
+					return { data: pr };
+				}
 			})
 		})
 	});

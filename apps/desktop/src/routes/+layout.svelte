@@ -1,8 +1,13 @@
 <script lang="ts">
-	import '@gitbutler/ui/main.css';
+	import '@gitbutler/design-core/tokens';
+	import '@gitbutler/design-core/fonts';
 	import '../styles/styles.css';
-
+	import { browser, dev } from '$app/environment';
+	import { afterNavigate, beforeNavigate } from '$app/navigation';
+	import { page } from '$app/state';
 	import AppUpdater from '$components/AppUpdater.svelte';
+	import FocusCursor from '$components/FocusCursor.svelte';
+	import GlobalModal from '$components/GlobalModal.svelte';
 	import GlobalSettingsMenuAction from '$components/GlobalSettingsMenuAction.svelte';
 	import PromptModal from '$components/PromptModal.svelte';
 	import ReloadMenuAction from '$components/ReloadMenuAction.svelte';
@@ -11,218 +16,153 @@
 	import SwitchThemeMenuAction from '$components/SwitchThemeMenuAction.svelte';
 	import ToastController from '$components/ToastController.svelte';
 	import ZoomInOutMenuAction from '$components/ZoomInOutMenuAction.svelte';
-	import { PromptService as AIPromptService } from '$lib/ai/promptService';
-	import { AIService } from '$lib/ai/service';
-	import { PostHogWrapper } from '$lib/analytics/posthog';
-	import { CommandService, invoke } from '$lib/backend/ipc';
-	import {
-		IpcNameNormalizationService,
-		setNameNormalizationServiceContext
-	} from '$lib/branches/nameNormalizationService';
-	import { CommitService } from '$lib/commits/commitService.svelte';
-	import { AppSettings } from '$lib/config/appSettings';
-	import { SettingsService } from '$lib/config/appSettingsV2';
-	import { GitConfigService } from '$lib/config/gitConfigService';
-	import { FileService } from '$lib/files/fileService';
-	import { ButRequestDetailsService } from '$lib/forge/butRequestDetailsService';
-	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
-	import { GitHubClient } from '$lib/forge/github/githubClient';
-	import { GitHubUserService } from '$lib/forge/github/githubUserService';
-	import { HooksService } from '$lib/hooks/hooksService';
-	import { DiffService } from '$lib/hunks/diffService.svelte';
-	import { platformName } from '$lib/platform/platform';
-	import { ProjectsService } from '$lib/project/projectsService';
-	import { PromptService } from '$lib/prompt/promptService';
-	import { RemotesService } from '$lib/remotes/remotesService';
-	import { setSecretsService } from '$lib/secrets/secretsService';
-	import { ChangeSelectionService } from '$lib/selection/changeSelection.svelte';
-	import { SETTINGS, loadUserSettings } from '$lib/settings/userSettings';
-	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
-	import { StackService } from '$lib/stacks/stackService.svelte';
-	import { ClientState } from '$lib/state/clientState.svelte';
-	import { UiState } from '$lib/state/uiState.svelte';
-	import { UpdaterService } from '$lib/updater/updater';
-	import { UpstreamIntegrationService } from '$lib/upstream/upstreamIntegrationService.svelte';
-	import { User } from '$lib/user/user';
-	import { UserService } from '$lib/user/userService';
-	import * as events from '$lib/utils/events';
+	import { POSTHOG_WRAPPER } from '$lib/analytics/posthog';
+	import { initDependencies } from '$lib/bootstrap/deps';
+	import { SETTINGS_SERVICE } from '$lib/config/appSettingsV2';
+	import { GIT_CONFIG_SERVICE } from '$lib/config/gitConfigService';
+	import { ircEnabled, ircServer, codegenEnabled, fModeEnabled } from '$lib/config/uiFeatureFlags';
+	import { GITHUB_CLIENT } from '$lib/forge/github/githubClient';
+	import { IRC_CLIENT } from '$lib/irc/ircClient.svelte';
+	import { IRC_SERVICE } from '$lib/irc/ircService.svelte';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { FILE_SELECTION_MANAGER } from '$lib/selection/fileSelectionManager.svelte';
+	import { SHORTCUT_SERVICE } from '$lib/shortcuts/shortcutService';
+	import { CLIENT_STATE } from '$lib/state/clientState.svelte';
+	import { UI_STATE } from '$lib/state/uiState.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
 	import { createKeybind } from '$lib/utils/hotkeys';
-	import { unsubscribe } from '$lib/utils/unsubscribe';
-	import { openExternalUrl } from '$lib/utils/url';
-	import { WorktreeService } from '$lib/worktree/worktreeService.svelte';
-	import { BranchService as CloudBranchService } from '@gitbutler/shared/branches/branchService';
-	import { LatestBranchLookupService } from '@gitbutler/shared/branches/latestBranchLookupService';
-	import { FeedService } from '@gitbutler/shared/feeds/service';
-	import { HttpClient } from '@gitbutler/shared/network/httpClient';
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
-	import { ProjectService as CloudProjectService } from '@gitbutler/shared/organizations/projectService';
-	import { RepositoryIdLookupService } from '@gitbutler/shared/organizations/repositoryIdLookupService';
-	import { PatchCommitService as CloudPatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
-	import { AppDispatch, AppState } from '@gitbutler/shared/redux/store.svelte';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import { reactive } from '@gitbutler/shared/storeUtils';
-	import { UserService as CloudUserService } from '@gitbutler/shared/users/userService';
-	import { LineManagerFactory } from '@gitbutler/ui/commitLines/lineManager';
-	import { LineManagerFactory as StackingLineManagerFactory } from '@gitbutler/ui/commitLines/lineManager';
-	import { setExternalLinkService } from '@gitbutler/ui/link/externalLinkService';
-	import { onMount, setContext, type Snippet } from 'svelte';
-	import { Toaster } from 'svelte-french-toast';
+	import { inject } from '@gitbutler/core/context';
+	import { ChipToastContainer } from '@gitbutler/ui';
+	import { FOCUS_MANAGER } from '@gitbutler/ui/focus/focusManager';
+	import { type Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
-	import { dev } from '$app/environment';
-	import { browser } from '$app/environment';
-	import { goto } from '$app/navigation';
-	import { beforeNavigate, afterNavigate } from '$app/navigation';
-	import { env } from '$env/dynamic/public';
 
 	const { data, children }: { data: LayoutData; children: Snippet } = $props();
+	const projectId = $derived(page.params.projectId);
 
-	const userSettings = loadUserSettings();
-	setContext(SETTINGS, userSettings);
+	// =============================================================================
+	// BOOTSTRAP & INIT
+	// =============================================================================
 
-	const appState = new AppState();
+	const { backend } = data;
+	initDependencies(data);
 
-	const github = new GitHubClient();
-	setContext(GitHubClient, github);
-	const user = data.userService.user;
+	const clientState = inject(CLIENT_STATE);
+	const posthog = inject(POSTHOG_WRAPPER);
+
+	clientState.initPersist();
+
+	// =============================================================================
+	// CORE REACTIVE STATE & EFFECTS
+	// =============================================================================
+
+	const userService = inject(USER_SERVICE);
+	const user = $derived(userService.user);
+
+	// GitHub token management
+	const gitHubClient = inject(GITHUB_CLIENT);
 	const accessToken = $derived($user?.github_access_token);
-	$effect(() => github.setToken(accessToken));
+	$effect(() => gitHubClient.setToken(accessToken));
 
-	const clientState = new ClientState(data.tauri, github);
-
-	const changeSelection = $derived(clientState.changeSelection);
-	const changeSelectionService = new ChangeSelectionService(
-		reactive(() => changeSelection),
-		clientState.dispatch
-	);
-	const stackService = new StackService(clientState, data.posthog);
-	const worktreeService = new WorktreeService(clientState);
-	const feedService = new FeedService(data.cloud, appState.appDispatch);
-	const organizationService = new OrganizationService(data.cloud, appState.appDispatch);
-	const cloudUserService = new CloudUserService(data.cloud, appState.appDispatch);
-	const cloudProjectService = new CloudProjectService(data.cloud, appState.appDispatch);
-
-	const cloudBranchService = new CloudBranchService(data.cloud, appState.appDispatch);
-	const cloudPatchService = new CloudPatchCommitService(data.cloud, appState.appDispatch);
-	const repositoryIdLookupService = new RepositoryIdLookupService(data.cloud, appState.appDispatch);
-	const latestBranchLookupService = new LatestBranchLookupService(data.cloud, appState.appDispatch);
-	const webRoutesService = new WebRoutesService(env.PUBLIC_CLOUD_BASE_URL);
-	const diffService = new DiffService(clientState);
-	const shortcutService = new ShortcutService(data.tauri);
-	const commitService = new CommitService();
-	const butRequestDetailsService = new ButRequestDetailsService(
-		cloudBranchService,
-		latestBranchLookupService
-	);
-	const upstreamIntegrationService = new UpstreamIntegrationService(
-		clientState,
-		stackService,
-		data.projectsService,
-		cloudProjectService,
-		cloudBranchService,
-		latestBranchLookupService
-	);
-
-	const uiStateSlice = $derived(clientState.uiState);
-	const uiState = new UiState(
-		reactive(() => uiStateSlice),
-		clientState.dispatch
-	);
-	setContext(UiState, uiState);
-
-	const forgeFactory = new DefaultForgeFactory(
-		clientState['githubApi'],
-		data.posthog,
-		data.projectMetrics
-	);
-	setContext(DefaultForgeFactory, forgeFactory);
-
-	shortcutService.listen();
-
-	setExternalLinkService({ open: openExternalUrl });
-
-	setContext(AppState, appState);
-	setContext(AppDispatch, appState.appDispatch);
-	setContext(ChangeSelectionService, changeSelectionService);
-	setContext(ClientState, clientState);
-	setContext(FeedService, feedService);
-	setContext(OrganizationService, organizationService);
-	setContext(CloudUserService, cloudUserService);
-	setContext(CloudProjectService, cloudProjectService);
-	setContext(CloudBranchService, cloudBranchService);
-	setContext(CloudPatchCommitService, cloudPatchService);
-	setContext(RepositoryIdLookupService, repositoryIdLookupService);
-	setContext(LatestBranchLookupService, latestBranchLookupService);
-	setContext(WebRoutesService, webRoutesService);
-	setContext(HooksService, data.hooksService);
-	setContext(SettingsService, data.settingsService);
-	setContext(FileService, data.fileService);
-	setContext(CommitService, commitService);
-	setContext(ButRequestDetailsService, butRequestDetailsService);
-
-	// Setters do not need to be reactive since `data` never updates
-	setSecretsService(data.secretsService);
-	setContext(PostHogWrapper, data.posthog);
-	setContext(CommandService, data.commandService);
-	setContext(UserService, data.userService);
-	setContext(ProjectsService, data.projectsService);
-	setContext(UpdaterService, data.updaterService);
-	setContext(GitConfigService, data.gitConfig);
-	setContext(AIService, data.aiService);
-	setContext(PromptService, data.promptService);
-	setContext(HttpClient, data.cloud);
-	setContext(User, data.userService.user);
-	setContext(RemotesService, data.remotesService);
-	setContext(AIPromptService, data.aiPromptService);
-	setContext(LineManagerFactory, data.lineManagerFactory);
-	setContext(StackingLineManagerFactory, data.stackingLineManagerFactory);
-	setContext(AppSettings, data.appSettings);
-	setContext(StackService, stackService);
-	setContext(UpstreamIntegrationService, upstreamIntegrationService);
-	setContext(WorktreeService, worktreeService);
-	setContext(ShortcutService, shortcutService);
-	setContext(DiffService, diffService);
-
-	setNameNormalizationServiceContext(new IpcNameNormalizationService(invoke));
-
-	const settingsService = data.settingsService;
-	const settingsStore = settingsService.appSettings;
-
-	// Special initialization to capture pageviews for single page apps.
-	if (browser) {
-		beforeNavigate(() => data.posthog.capture('$pageleave'));
-		afterNavigate(() => data.posthog.capture('$pageview'));
-	}
-
-	// This store is literally only used once, on GitHub oauth, to set the
-	// gh username on the user object. Furthermore, it isn't used anywhere.
-	// TODO: Remove the gh username completely?
-	const githubUserService = new GitHubUserService(data.tauri, clientState['githubApi']);
-	setContext(GitHubUserService, githubUserService);
-
-	let shareIssueModal: ShareIssueModal;
-
-	onMount(() => {
-		return unsubscribe(
-			events.on('goto', async (path: string) => await goto(path)),
-			events.on('openSendIssueModal', () => shareIssueModal?.show())
-		);
+	// Project tracking
+	const projectsService = inject(PROJECTS_SERVICE);
+	$effect(() => {
+		if (projectId) {
+			projectsService.setLastOpenedProject(projectId);
+		}
 	});
 
+	// Keyboard shortcuts
+	const shortcutService = inject(SHORTCUT_SERVICE);
+	$effect(() => shortcutService.listen());
+
+	// =============================================================================
+	// ANALYTICS & NAVIGATION
+	// =============================================================================
+
+	const gitConfig = inject(GIT_CONFIG_SERVICE);
+
+	if (browser) {
+		beforeNavigate(() => posthog.capture('$pageleave'));
+		afterNavigate(() => {
+			// Invalidate the git config on every navigation to ensure we have the latest
+			// (in case the user changed something outside of GitButler)
+			gitConfig.invalidateGitConfig();
+			posthog.capture('$pageview');
+		});
+	}
+
+	// =============================================================================
+	// EXPERIMENTAL FEATURES
+	// =============================================================================
+
+	// IRC functionality (experimental)
+	const ircClient = inject(IRC_CLIENT);
+	const ircService = inject(IRC_SERVICE);
+
+	$effect(() => {
+		if (!$ircEnabled || !$ircServer || !$user || !$user.login) {
+			return;
+		}
+		ircClient.connect({ server: $ircServer, nick: $user.login });
+		return () => {
+			ircService.disconnect();
+		};
+	});
+
+	// =============================================================================
+	// DEBUG & DEVELOPMENT TOOLS
+	// =============================================================================
+
+	// Debug services (only used for development)
+	const settingsService = inject(SETTINGS_SERVICE);
+	const settingsStore = settingsService.appSettings;
+	const uiState = inject(UI_STATE);
+	const idSelection = inject(FILE_SELECTION_MANAGER);
+
+	// Debug keyboard shortcuts
 	const handleKeyDown = createKeybind({
-		// Toggle v3 design on/off
-		'v 3': () => {
-			settingsService.updateFeatureFlags({ v3: !$settingsStore?.featureFlags.v3 });
+		// Toggle v3 workspace APIs on/off
+		'w s 3': () => {
+			settingsService.updateFeatureFlags({ ws3: !$settingsStore?.featureFlags.ws3 });
 		},
-		// This is a debug tool to learn about environment variables actually present - only available if the backend is in debug mode.
+		// Toggle next-gen safe checkout.
+		'c o 3': () => {
+			settingsService.updateFeatureFlags({ cv3: !$settingsStore?.featureFlags.cv3 });
+		},
+		// Show commit graph visualization
+		'd o t': async () => {
+			const projectId = page.params.projectId;
+			await backend.invoke('show_graph_svg', { projectId });
+		},
+		// Log environment variables
 		'e n v': async () => {
-			let env = await invoke('env_vars');
+			let env = await backend.invoke('env_vars');
 			// eslint-disable-next-line no-console
 			console.log(env);
 			(window as any).tauriEnv = env;
 			// eslint-disable-next-line no-console
 			console.log('Also written to window.tauriEnv');
+		},
+		// Toggle codegen feature flag
+		'c o d e g e n': () => {
+			$codegenEnabled = !$codegenEnabled;
 		}
 	});
+
+	const focusManager = inject(FOCUS_MANAGER);
+	$effect(() => focusManager.listen());
+
+	// Pass F mode feature flag to focus manager
+	$effect(() => {
+		focusManager.setFModeEnabled($fModeEnabled);
+	});
+
+	// Expose debugging objects to window
+	(window as any)['uiState'] = uiState;
+	(window as any)['idSelection'] = idSelection;
+	(window as any)['clientState'] = clientState;
+	(window as any)['focusManager'] = focusManager;
 </script>
 
 <svelte:window
@@ -231,21 +171,24 @@
 	onkeydown={handleKeyDown}
 />
 
+<svelte:head>
+	<title>GitButler</title>
+</svelte:head>
+
 <div class="app-root" role="application" oncontextmenu={(e) => !dev && e.preventDefault()}>
-	{#if platformName === 'macos'}
-		<div class="drag-region" data-tauri-drag-region></div>
-	{/if}
 	{@render children()}
 </div>
-<Toaster />
-<ShareIssueModal bind:this={shareIssueModal} />
+<ShareIssueModal />
 <ToastController />
+<ChipToastContainer />
 <AppUpdater />
 <PromptModal />
 <ZoomInOutMenuAction />
 <GlobalSettingsMenuAction />
 <ReloadMenuAction />
 <SwitchThemeMenuAction />
+<GlobalModal />
+<FocusCursor />
 
 {#if import.meta.env.MODE === 'development'}
 	<ReloadWarning />
@@ -255,16 +198,6 @@
 	.app-root {
 		display: flex;
 		height: 100%;
-		user-select: none;
 		cursor: default;
-	}
-
-	.drag-region {
-		z-index: var(--z-modal);
-		position: fixed;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 14px;
 	}
 </style>

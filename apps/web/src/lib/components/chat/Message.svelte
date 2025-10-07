@@ -2,6 +2,7 @@
 	export interface MessageProps {
 		highlight?: boolean;
 		projectId: string;
+		projectSlug: string;
 		changeId?: string;
 		event: ChatEvent;
 		disableActions?: boolean;
@@ -15,35 +16,41 @@
 	import { updateReactions } from '$lib/chat/reactions';
 	import ChatInReplyTo from '$lib/components/chat/ChatInReplyTo.svelte';
 	import MessageActions from '$lib/components/chat/MessageActions.svelte';
+	import MessageContextMenu from '$lib/components/chat/MessageContextMenu.svelte';
 	import MessageDiffSection from '$lib/components/chat/MessageDiffSection.svelte';
 	import MessageMarkdown from '$lib/components/chat/MessageMarkdown.svelte';
 	import { parseDiffPatchToEncodedSelection } from '$lib/diff/lineSelection.svelte';
-	import { UserService } from '$lib/user/userService';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
 	import { eventTimeStamp } from '@gitbutler/shared/branches/utils';
-	import { ChatChannelsService } from '@gitbutler/shared/chat/chatChannelsService';
+	import { CHAT_CHANNELS_SERVICE } from '@gitbutler/shared/chat/chatChannelsService';
 	import { type ChatMessageReaction } from '@gitbutler/shared/chat/types';
-	import { getContext } from '@gitbutler/shared/context';
-	import Badge from '@gitbutler/ui/Badge.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
+
+	import {
+		Badge,
+		Button,
+		ContextMenu,
+		EmojiPicker,
+		Icon,
+		PopoverActionsContainer,
+		PopoverActionsItem
+	} from '@gitbutler/ui';
 	import {
 		findEmojiByUnicode,
 		getInitialEmojis,
 		markRecentlyUsedEmoji,
 		type EmojiInfo
-	} from '@gitbutler/ui/emoji/utils';
-	import PopoverActionsContainer from '@gitbutler/ui/popoverActions/PopoverActionsContainer.svelte';
-	import PopoverActionsItem from '@gitbutler/ui/popoverActions/PopoverActionsItem.svelte';
+	} from '@gitbutler/ui/components/emoji/utils';
+
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { ChatEvent } from '@gitbutler/shared/patchEvents/types';
 	import type { UserSimple } from '@gitbutler/shared/users/types';
-
 	const UNKNOWN_AUTHOR = 'Unknown author';
 
 	const {
 		event,
 		projectId,
+		projectSlug,
 		changeId,
 		highlight,
 		disableActions,
@@ -51,13 +58,16 @@
 		scrollToMessage
 	}: MessageProps = $props();
 
-	const chatChannelService = getContext(ChatChannelsService);
-	const userService = getContext(UserService);
+	const chatChannelService = inject(CHAT_CHANNELS_SERVICE);
+	const userService = inject(USER_SERVICE);
 	const user = $derived(userService.user);
 
 	let kebabMenuTrigger = $state<HTMLButtonElement>();
+	let emojiPickerTrigger = $state<HTMLButtonElement>();
 	let contextMenu = $state<ReturnType<typeof ContextMenu>>();
+	let emojiPicker = $state<ReturnType<typeof ContextMenu>>();
 	let isOpenedByKebabButton = $state(false);
+	let isOpenedByEmojiPicker = $state(false);
 	let recentlyUsedEmojis = $state<EmojiInfo[]>([]);
 	const reactionSet = new SvelteSet<string>();
 
@@ -117,6 +127,10 @@
 		reactionSet.delete(emoji.unicode);
 	}
 
+	function onEmojiSelect(emoji: EmojiInfo) {
+		handleReaction(emoji);
+		emojiPicker?.close();
+	}
 	async function handleClickOnExistingReaction(unicode: string) {
 		const emojiInfo = findEmojiByUnicode(unicode);
 		if (!emojiInfo) return;
@@ -225,7 +239,11 @@
 
 	<!-- Message actions -->
 	{#if !disableActions}
-		<PopoverActionsContainer class="message-actions-menu" thin stayOpen={isOpenedByKebabButton}>
+		<PopoverActionsContainer
+			class="message-actions-menu"
+			thin
+			stayOpen={isOpenedByKebabButton || isOpenedByEmojiPicker}
+		>
 			<!-- Emoji Reactions -->
 			{#if recentlyUsedEmojis.length > 0}
 				{#each recentlyUsedEmojis as emoji}
@@ -233,6 +251,7 @@
 						tooltip={emoji.label}
 						thin
 						disabled={!$user || reactionSet.has(emoji.unicode)}
+						overrideYScroll={0}
 						onclick={() => handleReaction(emoji)}
 					>
 						<p class="text-13" style="padding: 2px;">
@@ -242,8 +261,27 @@
 				{/each}
 			{/if}
 
+			<!-- Emoji Picker -->
+			<PopoverActionsItem
+				bind:el={emojiPickerTrigger}
+				activated={isOpenedByEmojiPicker}
+				icon="smile"
+				tooltip="Give me more emojis"
+				thin
+				overrideYScroll={0}
+				onclick={() => {
+					emojiPicker?.toggle();
+				}}
+			/>
+
 			<!-- Reply -->
-			<PopoverActionsItem icon="reply" tooltip="Reply" thin onclick={() => onReply()} />
+			<PopoverActionsItem
+				icon="reply"
+				tooltip="Reply"
+				thin
+				onclick={() => onReply()}
+				overrideYScroll={0}
+			/>
 
 			<!-- Kebab menu -->
 			<PopoverActionsItem
@@ -252,14 +290,30 @@
 				icon="kebab"
 				tooltip="More options"
 				thin
-				disabled
 				onclick={() => {
 					contextMenu?.toggle();
 				}}
+				overrideYScroll={0}
 			/>
 		</PopoverActionsContainer>
 	{/if}
 </div>
+
+<MessageContextMenu
+	bind:menu={contextMenu}
+	leftClickTrigger={kebabMenuTrigger}
+	{message}
+	{projectSlug}
+	onToggle={(isOpen) => (isOpenedByKebabButton = isOpen)}
+/>
+
+<ContextMenu
+	bind:this={emojiPicker}
+	leftClickTrigger={emojiPickerTrigger}
+	ontoggle={(isOpen) => (isOpenedByEmojiPicker = isOpen)}
+>
+	<EmojiPicker {onEmojiSelect} />
+</ContextMenu>
 
 <style lang="postcss">
 	@keyframes temporary-highlight {
@@ -275,16 +329,16 @@
 	}
 
 	.chat-message {
-		position: relative;
-		width: 100%;
+		box-sizing: border-box;
 		display: flex;
+		position: relative;
+		flex-shrink: 0;
+		width: 100%;
 		padding: 14px 16px;
 		gap: 12px;
-		box-sizing: border-box;
-		flex-shrink: 0;
+		border-bottom: 1px solid var(--clr-border-3);
 
 		background: var(--clr-bg-1);
-		border-bottom: 1px solid var(--clr-border-3);
 
 		&:first-child {
 			border-bottom: none;
@@ -311,12 +365,12 @@
 
 	.chat-message__issue-icon {
 		display: flex;
+		flex-shrink: 0;
+		align-items: center;
+		justify-content: center;
 		width: 24px;
 		height: 24px;
 		padding: 4px;
-		justify-content: center;
-		align-items: center;
-		flex-shrink: 0;
 
 		border-radius: 8px;
 		background: var(--clr-br-commit-changes-requested-bg);
@@ -343,16 +397,16 @@
 	.chat-message__data {
 		box-sizing: border-box;
 		display: flex;
+		flex-grow: 0;
 		flex-direction: column;
 		width: 100%;
-		gap: 12px;
-		flex-grow: 0;
 		min-width: 0;
+		gap: 12px;
 	}
 
 	.chat-message__header {
-		margin-top: 4px;
 		display: flex;
+		margin-top: 4px;
 		gap: 7px;
 	}
 
@@ -370,18 +424,18 @@
 	}
 
 	.chat-message-content {
+		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 16px;
 		width: 100%;
-		box-sizing: border-box;
+		gap: 16px;
 	}
 
 	.chat-message__content-text {
-		color: var(--clr-text-1);
-		width: 100%;
 		box-sizing: border-box;
+		width: 100%;
+		color: var(--clr-text-1);
 	}
 
 	.chat-message__reactions {

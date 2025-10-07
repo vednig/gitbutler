@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
+	import { BACKEND } from '$lib/backend';
+	import { SETTINGS } from '$lib/settings/userSettings';
+	import { SHORTCUT_SERVICE } from '$lib/shortcuts/shortcutService';
 	import { initTheme } from '$lib/utils/theme';
-	import { getContext, getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import type { Writable } from 'svelte/store';
+	import { inject } from '@gitbutler/core/context';
 
-	const userSettings = getContextStoreBySymbol<Settings, Writable<Settings>>(SETTINGS);
-	const shortcutService = getContext(ShortcutService);
+	const userSettings = inject(SETTINGS);
+	const shortcutService = inject(SHORTCUT_SERVICE);
+	const backend = inject(BACKEND);
 
-	initTheme(userSettings);
+	initTheme(userSettings, backend);
 
 	function updateTheme() {
 		userSettings.update((s) => ({
@@ -17,7 +18,5 @@
 		}));
 	}
 
-	shortcutService.on('switch-theme', () => {
-		updateTheme();
-	});
+	$effect(() => shortcutService.on('switch-theme', () => updateTheme()));
 </script>

@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
-	import { getContext } from 'svelte';
 	import { browser } from '$app/environment';
+	import { inject } from '@gitbutler/core/context';
+	import {
+		OrganizationService,
+		ORGANIZATION_SERVICE
+	} from '@gitbutler/shared/organizations/organizationService';
+	import { Button, Textbox } from '@gitbutler/ui';
 
 	interface Props {
 		organizationSlug: string;
@@ -18,7 +20,7 @@
 	let serviceError = $state(false);
 
 	// Get the OrganizationService from context
-	const organizationService = getContext(OrganizationService);
+	const organizationService = inject(ORGANIZATION_SERVICE);
 
 	$effect(() => {
 		if (browser) {
@@ -127,10 +129,10 @@
 	}
 
 	.info-text {
+		margin-top: 0.5rem;
 		color: #718096;
 		font-style: italic;
 		font-size: 0.8rem;
-		margin-top: 0.5rem;
 	}
 
 	.reset-container {
@@ -140,9 +142,9 @@
 	}
 
 	.error-text {
-		color: #e53e3e;
-		font-size: 0.8rem;
 		margin-top: 0.5rem;
+		color: #e53e3e;
 		font-weight: bold;
+		font-size: 0.8rem;
 	}
 </style>

@@ -13,6 +13,9 @@ import { vue } from '@codemirror/lang-vue';
 import { wast } from '@codemirror/lang-wast';
 import { xml } from '@codemirror/lang-xml';
 import { HighlightStyle, StreamLanguage } from '@codemirror/language';
+import { kotlin } from '@codemirror/legacy-modes/mode/clike';
+import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
+import { protobuf } from '@codemirror/legacy-modes/mode/protobuf';
 import { ruby } from '@codemirror/legacy-modes/mode/ruby';
 import { NodeType, Tree, Parser } from '@lezer/common';
 import { tags, highlightTree } from '@lezer/highlight';
@@ -20,7 +23,7 @@ import diff_match_patch from 'diff-match-patch';
 import type { BrandedId } from '$lib/utils/branding';
 
 export function parseHunk(hunkStr: string): Hunk {
-	const lines = hunkStr.trim().split('\n');
+	const lines = hunkStr.split('\n');
 	const headerLine = lines[0];
 	const bodyLines = lines.slice(1);
 
@@ -31,6 +34,9 @@ export function parseHunk(hunkStr: string): Hunk {
 
 	let lastBefore = hunk.oldStart;
 	let lastAfter = hunk.newStart;
+
+	const lastLineNumberBefore = hunk.oldStart + hunk.oldLines - 1;
+	const lastLineNumberAfter = hunk.newStart + hunk.newLines - 1;
 
 	for (const line of bodyLines) {
 		const type = lineType(line);
@@ -53,6 +59,7 @@ export function parseHunk(hunkStr: string): Hunk {
 			lastSection.lines.push({ beforeLineNumber: lastBefore, content: line.slice(1) });
 			lastBefore += 1;
 		} else {
+			if (lastBefore > lastLineNumberBefore || lastAfter > lastLineNumberAfter) continue;
 			lastSection.lines.push({
 				afterLineNumber: lastAfter,
 				beforeLineNumber: lastBefore,
@@ -66,6 +73,15 @@ export function parseHunk(hunkStr: string): Hunk {
 	return hunk;
 }
 
+export type DependencyLock = {
+	stackId: string;
+	commitId: string;
+};
+
+export type LineLock = LineId & {
+	locks: DependencyLock[];
+};
+
 export type Row = {
 	encodedLineId: DiffFileLineId;
 	beforeLineNumber?: number;
@@ -78,7 +94,25 @@ export type Row = {
 	isFirstOfSelectionGroup?: boolean;
 	isLastOfSelectionGroup?: boolean;
 	isLastSelected?: boolean;
+	isDeltaLine: boolean;
+	locks: DependencyLock[] | undefined;
 };
+
+function getLocks(
+	beforeLineNumber: number | undefined,
+	afterLineNumber: number | undefined,
+	lineLocks: LineLock[] | undefined
+): DependencyLock[] | undefined {
+	if (!lineLocks) {
+		return undefined;
+	}
+
+	const lineLock = lineLocks.find(
+		(lineLock) => lineLock.oldLine === beforeLineNumber && lineLock.newLine === afterLineNumber
+	);
+
+	return lineLock?.locks;
+}
 
 enum Operation {
 	Equal = 0,
@@ -111,7 +145,10 @@ export type ContentSection = {
 
 type Hunk = {
 	readonly oldStart: number;
+	readonly oldLines: number;
 	readonly newStart: number;
+	readonly newLines: number;
+	readonly comment?: string;
 	readonly contentSections: ContentSection[];
 };
 
@@ -119,14 +156,23 @@ type DiffRows = { prevRows: Row[]; nextRows: Row[] };
 
 const headerRegex =
 	/@@ -(?<beforeStart>\d+),?(?<beforeCount>\d+)? \+(?<afterStart>\d+),?(?<afterCount>\d+)? @@(?<comment>.+)?/;
-function parseHeader(header: string): { oldStart: number; newStart: number } {
+function parseHeader(header: string): {
+	oldStart: number;
+	newStart: number;
+	oldLines: number;
+	newLines: number;
+	comment?: string;
+} {
 	const result = headerRegex.exec(header);
 	if (!result?.groups) {
 		throw new Error('Failed to parse diff header');
 	}
 	return {
 		oldStart: parseInt(result.groups['beforeStart']),
-		newStart: parseInt(result.groups['afterStart'])
+		oldLines: parseInt(result.groups['beforeCount'] ?? '1'),
+		newStart: parseInt(result.groups['afterStart']),
+		newLines: parseInt(result.groups['afterCount'] ?? '1'),
+		comment: result.groups['comment']
 	};
 }
 
@@ -197,6 +243,9 @@ export function parserFromExtension(extension: string): Parser | undefined {
 		case 'tsx':
 			return javascript({ typescript: true, jsx: true }).language.parser;
 
+		case 'ahk':
+			return StreamLanguage.define(powerShell).parser;
+
 		case 'css':
 			return css().language.parser;
 
@@ -209,6 +258,8 @@ export function parserFromExtension(extension: string): Parser | undefined {
 		case 'wasm':
 			return wast().language.parser;
 
+		case 'c':
+		case 'h':
 		case 'cpp':
 		case 'c++':
 		case 'hpp':
@@ -221,8 +272,9 @@ export function parserFromExtension(extension: string): Parser | undefined {
 		case 'java':
 			return java().language.parser;
 
-		// case 'text/x-kotlin':
-		//     return new LanguageSupport(await CodeMirror.kotlin());
+		case 'kt':
+		case 'kts':
+			return StreamLanguage.define(kotlin).parser;
 
 		case 'json':
 			return json().language.parser;
@@ -233,6 +285,9 @@ export function parserFromExtension(extension: string): Parser | undefined {
 		case 'py':
 		case 'python':
 			return python().language.parser;
+
+		case 'proto':
+			return StreamLanguage.define(protobuf).parser;
 
 		case 'md':
 			return markdown().language.parser;
@@ -483,7 +538,8 @@ function createRowData(
 	fileName: string,
 	section: ContentSection,
 	parser: Parser | undefined,
-	selectedLines: LineSelector[] | undefined
+	selectedLines: LineSelector[] | undefined,
+	lineLocks: LineLock[] | undefined
 ): Row[] {
 	return section.lines.map((line) => {
 		// if (line.content === '') {
@@ -499,6 +555,8 @@ function createRowData(
 			type: section.sectionType,
 			size: line.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(section.sectionType),
+			locks: getLocks(line.beforeLineNumber, line.afterLineNumber, lineLocks),
 			...getSelectionParams(line, selectedLines)
 		};
 	});
@@ -516,7 +574,7 @@ function toTokens(inputLine: string, parser: Parser | undefined): string[] {
 	highlighter.highlight((text, classNames) => {
 		const token = classNames
 			? `<span data-no-drag class=${classNames}>${sanitize(text)}</span>`
-			: sanitize(text);
+			: `<span data-no-drag>${sanitize(text)}</span>`;
 
 		tokens.push(token);
 	});
@@ -534,7 +592,8 @@ function computeWordDiff(
 	prevSection: ContentSection,
 	nextSection: ContentSection,
 	parser: Parser | undefined,
-	selectedLines: LineSelector[] | undefined
+	selectedLines: LineSelector[] | undefined,
+	lineLocks: LineLock[] | undefined
 ): DiffRows {
 	const numberOfLines = nextSection.lines.length;
 	const returnRows: DiffRows = {
@@ -559,6 +618,8 @@ function computeWordDiff(
 			type: prevSection.sectionType,
 			size: oldLine.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(prevSection.sectionType),
+			locks: getLocks(oldLine.beforeLineNumber, oldLine.afterLineNumber, lineLocks),
 			...getSelectionParams(oldLine, selectedLines)
 		};
 		const nextSectionRow = {
@@ -573,6 +634,8 @@ function computeWordDiff(
 			type: nextSection.sectionType,
 			size: newLine.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(nextSection.sectionType),
+			locks: getLocks(newLine.beforeLineNumber, newLine.afterLineNumber, lineLocks),
 			...getSelectionParams(newLine, selectedLines)
 		};
 
@@ -607,7 +670,8 @@ function computeInlineWordDiff(
 	prevSection: ContentSection,
 	nextSection: ContentSection,
 	parser: Parser | undefined,
-	selectedLines: LineSelector[] | undefined
+	selectedLines: LineSelector[] | undefined,
+	lineLocks: LineLock[] | undefined
 ): Row[] {
 	const numberOfLines = nextSection.lines.length;
 
@@ -631,6 +695,8 @@ function computeInlineWordDiff(
 			type: nextSection.sectionType,
 			size: newLine.content.length,
 			isLast: false,
+			isDeltaLine: isDeltaLine(nextSection.sectionType),
+			locks: getLocks(newLine.beforeLineNumber, newLine.afterLineNumber, lineLocks),
 			...getSelectionParams(newLine, selectedLines)
 		};
 
@@ -658,9 +724,18 @@ function computeInlineWordDiff(
 	return rows;
 }
 
-export interface LineSelector {
+export interface LineId {
+	// The "before" or "removed" line number.
 	oldLine: number | undefined;
+	// The "after" or "added" line number.
 	newLine: number | undefined;
+}
+
+export function lineIdKey(lineId: LineId): string {
+	return `${lineId.oldLine}-${lineId.newLine}`;
+}
+
+export interface LineSelector extends LineId {
 	/**
 	 * Whether this is the first line in any selection group.
 	 */
@@ -680,29 +755,30 @@ export function generateRows(
 	subsections: ContentSection[],
 	inlineUnifiedDiffs: boolean,
 	parser: Parser | undefined,
-	selectedLines: LineSelector[] | undefined
+	selectedLines: LineSelector[] | undefined,
+	lineLocks: LineLock[] | undefined
 ) {
 	const rows = subsections.reduce((acc, nextSection, i) => {
 		const prevSection = subsections[i - 1];
 
 		// Filter out section for which we don't need to compute word diffs
 		if (!prevSection || nextSection.sectionType === SectionType.Context) {
-			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
+			acc.push(...createRowData(filePath, nextSection, parser, selectedLines, lineLocks));
 			return acc;
 		}
 
 		if (prevSection.sectionType === SectionType.Context) {
-			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
+			acc.push(...createRowData(filePath, nextSection, parser, selectedLines, lineLocks));
 			return acc;
 		}
 
 		if (prevSection.lines.length !== nextSection.lines.length) {
-			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
+			acc.push(...createRowData(filePath, nextSection, parser, selectedLines, lineLocks));
 			return acc;
 		}
 
 		if (isLineEmpty(prevSection.lines)) {
-			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
+			acc.push(...createRowData(filePath, nextSection, parser, selectedLines, lineLocks));
 			return acc;
 		}
 
@@ -711,12 +787,19 @@ export function generateRows(
 			prevSection.lines.some((line) => line.content.length > 300) ||
 			nextSection.lines.some((line) => line.content.length > 300)
 		) {
-			acc.push(...createRowData(filePath, nextSection, parser, selectedLines));
+			acc.push(...createRowData(filePath, nextSection, parser, selectedLines, lineLocks));
 			return acc;
 		}
 
 		if (inlineUnifiedDiffs) {
-			const rows = computeInlineWordDiff(filePath, prevSection, nextSection, parser, selectedLines);
+			const rows = computeInlineWordDiff(
+				filePath,
+				prevSection,
+				nextSection,
+				parser,
+				selectedLines,
+				lineLocks
+			);
 
 			acc.splice(-prevSection.lines.length);
 
@@ -728,7 +811,8 @@ export function generateRows(
 				prevSection,
 				nextSection,
 				parser,
-				selectedLines
+				selectedLines,
+				lineLocks
 			);
 
 			// Insert returned row datastructures into the correct place
@@ -776,4 +860,11 @@ export function getHunkLineInfo(subsections: ContentSection[]): DiffHunkLineInfo
 		afterLineStart,
 		afterLineCount
 	};
+}
+
+/**
+ * Check if a given diff row is a line of actual changed code.
+ */
+export function isDeltaLine(type: SectionType): boolean {
+	return [SectionType.AddedLines, SectionType.RemovedLines].includes(type);
 }

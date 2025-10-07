@@ -49,6 +49,8 @@ pub enum RepositoryError<
     AskpassDeviceMismatch,
     #[error("failed to perform askpass security check; executable mismatch")]
     AskpassExecutableMismatch,
+    #[error("Askpass Not found. Run `cargo build -p gitbutler-git` to get the binaries needed")]
+    AskpassExecutableNotFound,
 }
 
 /// Higher level errors that can occur when interacting with the CLI.
@@ -108,10 +110,9 @@ where
         .into_owned();
 
     let res = executor.stat(&askpath_path).await.map_err(Error::<E>::Exec);
-    debug_assert!(
-        res.is_ok(),
-        "Run `cargo build -p gitbutler-git` to get the binaries needed for this assertion to pass"
-    );
+    if res.is_err() {
+        return Err(Error::<E>::AskpassExecutableNotFound);
+    }
     let askpath_stat = res?;
 
     #[cfg(unix)]
@@ -120,7 +121,7 @@ where
         .await
         .map_err(Error::<E>::Exec)?;
 
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     let sock_server = unsafe { executor.create_askpass_server() }
         .await
         .map_err(Error::<E>::Exec)?;
@@ -157,8 +158,9 @@ where
         .or_else(|| std::env::var("GIT_SSH").ok())
     {
         Some(v) => v,
-        None => get_core_sshcommand(executor, &repo_path)
-            .await
+        None => get_core_sshcommand(&repo_path)
+            .ok()
+            .flatten()
             .unwrap_or_else(|| "ssh".into()),
     };
 
@@ -217,7 +219,6 @@ where
                 system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
                 // We can ignore clippy here since the type is different depending on the platform.
-                #[allow(clippy::useless_conversion)]
                 let peer_path = system
                     .process(sysinfo::Pid::from_u32(peer_pid.try_into().map_err(|_| Error::<E>::NoSuchPid(peer_pid))?))
                     .and_then(|p| p.exe().map(|exe| exe.to_string_lossy().into_owned()))
@@ -336,12 +337,14 @@ where
 /// Any prompts for the user are passed to the asynchronous callback `on_prompt`,
 /// which should return the user's response or `None` if the operation should be
 /// aborted, in which case an `Err` value is returned from this function.
+#[expect(clippy::too_many_arguments)]
 pub async fn push<P, F, Fut, E, Extra>(
     repo_path: P,
     executor: E,
     remote: &str,
     refspec: RefSpec,
     force: bool,
+    force_push_protection: bool,
     on_prompt: F,
     extra: Extra,
 ) -> Result<(), crate::Error<Error<E>>>
@@ -360,38 +363,46 @@ where
     args.push(&refspec);
 
     if force {
-        args.push("--force-with-lease");
+        if force_push_protection {
+            args.push("--force-with-lease");
+            args.push("--force-if-includes");
+        } else {
+            args.push("--force");
+        }
     }
 
     let (status, stdout, stderr) =
         execute_with_auth_harness(repo_path, &executor, &args, None, on_prompt, extra).await?;
 
     if status == 0 {
-        Ok(())
-    } else {
-        // Was the ref not found?
-        if let Some(refname) = stderr
-            .lines()
-            .find(|line| line.to_lowercase().contains("does not match any"))
-            .map(|line| line.split_whitespace().last().unwrap_or_default())
-        {
-            Err(crate::Error::RefNotFound(refname.to_owned()))?
-        } else if stderr.to_lowercase().contains("permission denied") {
-            Err(crate::Error::AuthorizationFailed(Error::<E>::Failed {
-                status,
-                args: args.into_iter().map(Into::into).collect(),
-                stdout,
-                stderr,
-            }))?
-        } else {
-            Err(Error::<E>::Failed {
-                status,
-                args: args.into_iter().map(Into::into).collect(),
-                stdout,
-                stderr,
-            })?
-        }
+        return Ok(());
     }
+
+    let base_error = Error::<E>::Failed {
+        status,
+        args: args.into_iter().map(Into::into).collect(),
+        stdout,
+        stderr: stderr.clone(),
+    };
+
+    if status == 1 && force && force_push_protection {
+        return Err(crate::Error::ForcePushProtection(base_error));
+    }
+
+    // Check for specific error patterns in stderr
+    if let Some(refname) = stderr
+        .lines()
+        .find(|line| line.to_lowercase().contains("does not match any"))
+        .and_then(|line| line.split_whitespace().last())
+    {
+        return Err(crate::Error::RefNotFound(refname.to_owned()));
+    }
+
+    if stderr.to_lowercase().contains("permission denied") {
+        return Err(crate::Error::AuthorizationFailed(base_error));
+    }
+
+    Err(base_error.into())
 }
 
 /// Signs the given commit-ish in the repository at the given path.
@@ -506,19 +517,9 @@ where
     Ok(commit_hash)
 }
 
-async fn get_core_sshcommand<E: GitExecutor, P: AsRef<Path>>(
-    executor: &E,
-    cwd: P,
-) -> Option<String> {
-    executor
-        .execute(&["config", "--get", "core.sshCommand"], cwd, None)
-        .await
-        .map(|(status, stdout, _)| {
-            if status != 0 {
-                None
-            } else {
-                Some(stdout.trim().to_string())
-            }
-        })
-        .unwrap_or(None)
+fn get_core_sshcommand(cwd: impl AsRef<Path>) -> anyhow::Result<Option<String>> {
+    Ok(gix::open(cwd.as_ref())?
+        .config_snapshot()
+        .trusted_program(&gix::config::tree::Core::SSH_COMMAND)
+        .map(|program| program.to_string_lossy().into_owned()))
 }

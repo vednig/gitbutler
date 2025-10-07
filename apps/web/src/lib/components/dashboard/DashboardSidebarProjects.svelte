@@ -1,19 +1,19 @@
 <script lang="ts">
 	import DashboardSidebarProject from '$lib/components/dashboard/DashboardSidebarProject.svelte';
-	import { WebState } from '$lib/redux/store.svelte';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
+	import { WEB_STATE } from '$lib/redux/store.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
 	import Loading from '@gitbutler/shared/network/Loading.svelte';
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
+	import { ORGANIZATION_SERVICE } from '@gitbutler/shared/organizations/organizationService';
 	import { getOrganizations } from '@gitbutler/shared/organizations/organizationsPreview.svelte';
 	import {
 		getAllUserProjects,
 		getRecentlyPushedProjects
 	} from '@gitbutler/shared/organizations/projectsPreview.svelte';
 
-	const webState = getContext(WebState);
-	const organizationService = getContext(OrganizationService);
-	const userService = getContext(UserService);
+	const webState = inject(WEB_STATE);
+	const organizationService = inject(ORGANIZATION_SERVICE);
+	const userService = inject(USER_SERVICE);
 
 	const user = $derived(userService.user);
 	const username = $derived($user?.login);
@@ -66,9 +66,9 @@
 
 	.group {
 		width: 100%;
-		border-bottom: 1px solid var(--clr-border-2);
 
 		padding-bottom: 12px;
+		border-bottom: 1px solid var(--clr-border-2);
 
 		&:last-child {
 			border-bottom: none;

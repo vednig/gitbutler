@@ -1,13 +1,15 @@
 <script lang="ts">
 	import LoginModal from '$lib/components/LoginModal.svelte';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import { PatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
+	import { PATCH_COMMIT_SERVICE } from '@gitbutler/shared/patches/patchCommitService';
 	import { type PatchCommit } from '@gitbutler/shared/patches/types';
-	import CommitStatusBadge from '@gitbutler/ui/CommitStatusBadge.svelte';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import DropDownButton from '@gitbutler/ui/DropDownButton.svelte';
+	import {
+		CommitStatusBadge,
+		ContextMenuItem,
+		ContextMenuSection,
+		DropdownButton
+	} from '@gitbutler/ui';
 
 	interface Props {
 		branchUuid: string;
@@ -25,8 +27,8 @@
 
 	const { patch, branchUuid, isUserLoggedIn }: Props = $props();
 
-	const patchService = getContext(PatchCommitService);
-	const userService = getContext(UserService);
+	const patchService = inject(PATCH_COMMIT_SERVICE);
+	const userService = inject(USER_SERVICE);
 	const user = userService.user;
 
 	const userAction = $derived.by<UserActionType>(() => {
@@ -43,7 +45,7 @@
 	let loginModal = $state<LoginModal>();
 	let action = $state<Action>('approve');
 	let isExecuting = $state(false);
-	let dropDownButton = $state<ReturnType<typeof DropDownButton>>();
+	let dropDownButton = $state<ReturnType<typeof DropdownButton>>();
 
 	const buttonColor = $derived.by(() => {
 		switch (action) {
@@ -94,20 +96,18 @@
 		}
 	}
 
-	function showAlertDialog(action: Action) {
+	function confirmStatusChange(action: Action): boolean {
 		const message =
 			action === 'requestChanges'
 				? 'You have already approved this commit. Do you want to request changes instead?'
 				: 'You have already requested changes for this commit. Do you want to approve it instead?';
 
-		if (!confirm(message)) return;
+		return confirm(message);
 	}
 
 	function handleChangeStatus(action: Action) {
-		if (action === 'approve') {
-			showAlertDialog(action);
-		} else {
-			showAlertDialog(action);
+		if (!confirmStatusChange(action)) {
+			return;
 		}
 		handleClick(action);
 	}
@@ -134,11 +134,11 @@
 		</button>
 	</div>
 {:else}
-	<DropDownButton
+	<DropdownButton
 		bind:this={dropDownButton}
 		loading={isExecuting}
-		menuPosition="top"
 		{icon}
+		menuSide="top"
 		style={buttonColor}
 		onclick={() => handleClick(action)}
 	>
@@ -161,7 +161,7 @@
 				/>
 			</ContextMenuSection>
 		{/snippet}
-	</DropDownButton>
+	</DropdownButton>
 {/if}
 
 <LoginModal bind:this={loginModal}>

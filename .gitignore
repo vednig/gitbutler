@@ -1,15 +1,18 @@
 # will have compiled rust files and executables
 /target/
-release/
+/release/
 generated-archives/
 generated-do-not-edit/
 
 # editors
 .idea
+$.idea
+$.zed
 
 .sentryclirc
 .DS_Store
-apps/desktop/e2e/videos/*.mp4
+e2e/blackbox/videos/*.mp4
+e2e/web/test-results/
 
 .env
 .env.*
@@ -48,9 +51,19 @@ playwright-report
 *storybook.log
 storybook-static
 
+# Cypress
+**/cypress/screenshots
+
 # Vercel
 .vercel
 
 # Rust analyzer
 .rust-analyzer/
 .aider*
+
+# Claude
+.swarm
+.claude-flow
+
+# Auto-generated design tokens
+packages/ui/src/styles/tokens.css

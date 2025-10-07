@@ -1,44 +1,67 @@
-import { Tauri } from '$lib/backend/tauri';
-import { isBackendError } from '$lib/error/typeguards';
+import { isBackend, type IBackend } from '$lib/backend';
+import { isReduxError, type ReduxError } from '$lib/state/reduxError';
+import { isErrorlike } from '@gitbutler/ui/utils/typeguards';
 import { type BaseQueryApi, type QueryReturnValue } from '@reduxjs/toolkit/query';
+import type { ExtraOptions } from '$lib/state/butlerModule';
 
-export type TauriBaseQueryFn = typeof tauriBaseQuery;
+import type { BaseQueryFn } from '@reduxjs/toolkit/query';
 
-export async function tauriBaseQuery(
+export type TauriExtraOptions = ExtraOptions & { command?: string };
+export type TauriBaseQueryFn = BaseQueryFn<ApiArgs, unknown, unknown, TauriExtraOptions>;
+
+// eslint-disable-next-line func-style
+export const tauriBaseQuery: TauriBaseQueryFn = async (
 	args: ApiArgs,
-	api: BaseQueryApi
-): Promise<QueryReturnValue<unknown, TauriCommandError, undefined>> {
-	if (!hasTauriExtra(api.extra)) {
-		return { error: { message: 'Redux dependency Tauri not found!' } };
+	api: BaseQueryApi,
+	extra: TauriExtraOptions
+): Promise<QueryReturnValue<unknown, ReduxError, undefined>> => {
+	const command = extra.command;
+	if (!command) {
+		return newError('Expected a command!');
 	}
-	try {
-		return { data: await api.extra.tauri.invoke(args.command, args.params) };
-	} catch (error: unknown) {
-		if (isBackendError(error)) {
-			return { error: error as TauriCommandError };
-		}
-		return { error: { message: String(error) } as TauriCommandError };
-	}
-}
 
-type ApiArgs = {
-	command: string;
-	params: Record<string, unknown>;
+	if (!hasBackendExtra(api.extra)) {
+		return newError('Redux dependency Tauri not found!');
+	}
+
+	try {
+		const result = { data: await api.extra.backend.invoke(command, args) };
+		return result;
+	} catch (error: unknown) {
+		const name = `API error: (${command})`;
+		if (isReduxError(error)) {
+			const newMessage =
+				`command: ${command}\nparams: ${JSON.stringify(args)})\n\n` + error.message;
+			return { error: { name, message: newMessage, code: error.code } };
+		}
+
+		if (isErrorlike(error)) {
+			return { error: { name, message: error.message } };
+		}
+
+		return { error: { name, message: String(error) } };
+	}
 };
 
-export type TauriCommandError = { message: string; code?: string };
+function newError(message: string) {
+	return {
+		error: { name: 'Failed to execute Tauri query', message }
+	};
+}
+
+type ApiArgs = Record<string, unknown> | undefined;
 
 /**
  * Typeguard for accessing injected Tauri dependency safely.
  */
-export function hasTauriExtra(extra: unknown): extra is {
-	tauri: Tauri;
+export function hasBackendExtra(extra: unknown): extra is {
+	backend: IBackend;
 } {
 	return (
 		!!extra &&
 		typeof extra === 'object' &&
 		extra !== null &&
-		'tauri' in extra &&
-		extra.tauri instanceof Tauri
+		'backend' in extra &&
+		isBackend(extra.backend)
 	);
 }

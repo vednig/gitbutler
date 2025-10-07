@@ -34,7 +34,7 @@ pub mod tokio;
 /// we have some loose checks to ensure that the invariants are upheld,
 /// we cannot guarantee that they are upheld in all cases. Thus, it is
 /// up to the implementor to ensure that the invariants are upheld.
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 pub unsafe trait GitExecutor {
     /// The error type returned by this executor,
     /// specifically in cases where the execution fails.
@@ -77,8 +77,6 @@ pub unsafe trait GitExecutor {
         let mut args = args.as_ref().to_vec();
 
         args.insert(0, "--no-pager");
-        // TODO(qix-): Test the performance impact of this.
-        args.insert(0, "--no-optional-locks");
         // '-c' arguments must be inserted in reverse order; Git does not support
         // shortflags for '-c' arguments, so they must be separated.
         args.insert(0, "protocol.version=2");

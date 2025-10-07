@@ -1,36 +1,4 @@
-/**
- * Represents a branch in a `Stack`.
- * It contains commits derived from the local pseudo branch and it's respective remote.
- * This is distinct from a git branch in the sense that it has no local reference - something that we may want to change in the future.
- */
-export type StackBranch = {
-	/** The name of the branch */
-	readonly name: string;
-	readonly remoteTrackingBranch: string | null;
-	/**
-	 * Description of the branch.
-	 * Can include arbitrary utf8 data, eg. markdown etc.
-	 */
-	readonly description: string | null;
-	/** The pull(merge) request associated with the branch, or None if no such entity has not been created. */
-	readonly prNumber: number | null;
-	/** A unique identifier for the GitButler review associated with the branch, if any. */
-	readonly reviewId: string | null;
-	/**
-	 *
-	 * Indicates that the branch was previously part of a stack but it has since been integrated.
-	 * In other words, the merge base of the stack is now above this branch.
-	 * This would occur when the branch has been merged at the remote and the workspace has been updated with that change.
-	 * An archived branch will not have any commits associated with it.
-	 */
-	readonly archived: boolean;
-	/**
-	 * This is the base commit from the perspective of this branch.
-	 * If the branch is part of a stack and is on top of another branch, this is the head of the branch below it.
-	 * If this branch is at the bottom of the stack, this is the merge base of the stack.
-	 */
-	readonly baseCommit: string;
-};
+import type { TreeChange, TreeStats } from '$lib/hunks/change';
 
 /** Commit that is a part of a [`StackBranch`](gitbutler_stack::StackBranch) and, as such, containing state derived in relation to the specific branch.*/
 export type Commit = {
@@ -59,6 +27,22 @@ export type Commit = {
 	readonly author: Author;
 };
 
+/** List of changes, stats and metadata for a commit */
+export type CommitDetails = {
+	/** The commit */
+	readonly commit: Commit;
+	/** The changes that were made to the tree. */
+	readonly changes: TreeChange[];
+	/** The stats of the changes. */
+	readonly stats: TreeStats;
+	/** If there are any conflicted files this will show them */
+	readonly conflictEntries?: {
+		ancestorEntries: string[];
+		ourEntries: string[];
+		theirEntries: string[];
+	};
+};
+
 /**
  * Commit that is only at the remote.
  * Unlike the `Commit` struct, there is no knowledge of GitButler concepts like conflicted state etc.
@@ -76,6 +60,15 @@ export type UpstreamCommit = {
 
 export function isCommit(something: Commit | UpstreamCommit): something is Commit {
 	return 'state' in something;
+}
+
+export function extractUpstreamCommitId(commit: Commit | UpstreamCommit): string | undefined {
+	if (isCommit(commit)) {
+		if (commit.state.type === 'LocalAndRemote') {
+			return commit.state.subject;
+		}
+	}
+	return undefined;
 }
 
 /** Represents the author of a commit. */
@@ -107,5 +100,3 @@ export type CommitState =
 	 * This should happen when this commit or the contents of this commit is already part of the base.
 	 */
 	| { readonly type: 'Integrated' };
-
-export type CommitStateType = CommitState['type'];

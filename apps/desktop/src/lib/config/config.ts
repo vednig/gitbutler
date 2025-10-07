@@ -1,16 +1,10 @@
-import { persisted, type Persisted } from '@gitbutler/shared/persisted';
-
-export function projectHttpsWarningBannerDismissed(projectId: string): Persisted<boolean> {
-	const key = 'projectHttpsWarningBannerDismissed_';
-	return persisted(false, key + projectId);
-}
-
-export function projectDeleteBranchesOnMergeWarningDismissed(
-	projectId: string
-): Persisted<boolean> {
-	const key = 'projectDeleteBranchesOnMergeWarningDismissed_';
-	return persisted(false, key + projectId);
-}
+import {
+	persisted,
+	getBooleanStorageItem,
+	setStorageItem,
+	persistWithExpiration,
+	type Persisted
+} from '@gitbutler/shared/persisted';
 
 export function projectCommitGenerationExtraConcise(projectId: string): Persisted<boolean> {
 	const key = 'projectCommitGenerationExtraConcise_';
@@ -28,13 +22,13 @@ export enum ListPRsFilter {
 	OnlyYours = 'ONLY_YOURS'
 }
 
-export function projectPullRequestListingFilter(projectId: string): Persisted<string> {
-	const key = 'projectPullRequestListingFilter_';
-	return persisted(ListPRsFilter.All, key + projectId);
-}
-
 export function projectAiGenEnabled(projectId: string): Persisted<boolean> {
 	const key = 'projectAiGenEnabled_';
+	return persisted(false, key + projectId);
+}
+
+export function projectAiExperimentalFeaturesEnabled(projectId: string): Persisted<boolean> {
+	const key = 'projectAiExperimentalFeaturesEnabled_';
 	return persisted(false, key + projectId);
 }
 
@@ -43,13 +37,24 @@ export function projectRunCommitHooks(projectId: string): Persisted<boolean> {
 	return persisted(false, key + projectId);
 }
 
-export function projectLaneCollapsed(projectId: string, laneId: string): Persisted<boolean> {
-	const key = 'projectLaneCollapsed_';
-	return persisted(false, key + projectId + '_' + laneId);
+export function persistedChatModelName<T extends string>(
+	projectId: string,
+	defaultValue: T
+): Persisted<T> {
+	const key = 'projectChatModelName_';
+	return persisted(defaultValue, key + projectId);
 }
 
-export function persistedCommitMessage(projectId: string, branchId: string): Persisted<string> {
-	return persisted('', 'projectCurrentCommitMessage_' + projectId + '_' + branchId);
+const GITHUB_ORG_AUTH_ERROR_HANDLING_KEY = 'swallowGitHubOrgAuthErrors';
+export function persistSwallowGitHubOrgAuthErrors(swallow: boolean) {
+	setStorageItem(GITHUB_ORG_AUTH_ERROR_HANDLING_KEY, swallow);
 }
 
-export const showHistoryView = persisted(false, 'showHistoryView');
+export function getSwallowGitHubOrgAuthErrors(): boolean {
+	return getBooleanStorageItem(GITHUB_ORG_AUTH_ERROR_HANDLING_KEY) ?? false;
+}
+
+export function persistedDismissedForgeIntegrationPrompt(projectId: string): Persisted<boolean> {
+	const key = 'dismissedForgeIntegrationPrompt_';
+	return persistWithExpiration(false, key + projectId, 48 * 60); // 48 hours
+}

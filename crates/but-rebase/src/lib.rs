@@ -1,9 +1,9 @@
 //! An API for an interactive rebases, suitable for interactive, UI driven, and programmatic use.
 //!
 //! It will only affect the commit-graph, and never the alter the worktree in any way.
-#![deny(rust_2018_idioms, missing_docs)]
+#![deny(missing_docs)]
 
-use crate::commit::CommitterMode;
+use crate::commit::DateMode;
 use anyhow::{Context, Ok, Result, anyhow, bail};
 use bstr::BString;
 use gix::objs::Exists;
@@ -53,7 +53,8 @@ pub enum RebaseStep {
 }
 
 impl RebaseStep {
-    fn commit_id(&self) -> Option<&gix::oid> {
+    /// Get the commit id associated with a given step
+    pub fn commit_id(&self) -> Option<&gix::oid> {
         match self {
             RebaseStep::Pick { commit_id, .. }
             | RebaseStep::SquashIntoPreceding { commit_id, .. } => Some(commit_id),
@@ -168,10 +169,7 @@ impl Rebase<'_> {
     /// - The refname must be a valid reference name
     fn validate_step(&self, step: &RebaseStep) -> Result<()> {
         match step {
-            RebaseStep::Pick {
-                commit_id,
-                new_message: _,
-            } => {
+            RebaseStep::Pick { commit_id, .. } => {
                 self.assure_unique_step_and_existing_non_base(commit_id, "Picked")?;
             }
             RebaseStep::SquashIntoPreceding {
@@ -234,6 +232,9 @@ fn rebase(
                 commit_id,
                 new_message,
             } => {
+                // This should be the source commit id
+                last_seen_commit = Some(commit_id);
+
                 let commit = to_commit(repo, commit_id)?;
                 if commit.parents.len() > 1 {
                     let mut merge_commit = commit;
@@ -241,17 +242,18 @@ fn rebase(
                         merge_commit.message = new_message;
                     }
                     // Find any parent that we have seen during picking.
-                    let Some(parent_to_replace) = merge_commit.parents.iter_mut().find(|id| {
+                    let parent_to_replace = match merge_commit.parents.iter_mut().find(|id| {
                         (Some(**id) == base_substitute)
                             || commit_mapping.iter().any(|(mapping_base, old, _new)| {
                                 *mapping_base == base && (*id == old)
                             })
-                    }) else {
-                        bail!(
-                            "Merge-commit {commit_id} can't be remerged if none of \
-                                its parents was seen in the rebase (to \
-                                be replaced with this new commit)"
-                        )
+                    }) {
+                        None => merge_commit
+                            .parents
+                            .iter_mut()
+                            .next()
+                            .expect("more than one parents"),
+                        Some(parent) => parent,
                     };
                     *parent_to_replace = cursor.context("Expecting a base for any merge")?;
                     cursor = merge::octopus(repo, merge_commit, &mut graph)
@@ -279,7 +281,11 @@ fn rebase(
                             if let Some(new_message) = new_message {
                                 new_commit.message = new_message;
                             }
-                            cursor = Some(commit::create(repo, new_commit, CommitterMode::Update)?);
+                            cursor = Some(commit::create(
+                                repo,
+                                new_commit,
+                                DateMode::CommitterUpdateAuthorKeep,
+                            )?);
                         }
                         None => {
                             // TODO: should this be supported? This would be as easy as forgetting its parents.
@@ -289,7 +295,6 @@ fn rebase(
                         }
                     }
                 }
-                last_seen_commit = Some(commit_id);
             }
             RebaseStep::SquashIntoPreceding {
                 commit_id,
@@ -314,7 +319,7 @@ fn rebase(
                 if let Some(new_message) = new_message {
                     new_commit.message = new_message;
                 }
-                *cursor = commit::create(repo, new_commit, CommitterMode::Update)?;
+                *cursor = commit::create(repo, new_commit, DateMode::CommitterUpdateAuthorKeep)?;
             }
             RebaseStep::Reference(reference) => {
                 references.push(ReferenceSpec {
@@ -354,7 +359,26 @@ fn reword_commit(
 ) -> Result<gix::ObjectId> {
     let mut new_commit = repo.find_commit(oid)?.decode()?.to_owned();
     new_commit.message = new_message;
-    Ok(commit::create(repo, new_commit, CommitterMode::Update)?)
+    Ok(commit::create(
+        repo,
+        new_commit,
+        DateMode::CommitterUpdateAuthorKeep,
+    )?)
+}
+
+/// Replaces the tree of a commit for use in the rebase engine.
+pub fn replace_commit_tree(
+    repo: &gix::Repository,
+    oid: gix::ObjectId,
+    new_tree: gix::ObjectId,
+) -> Result<gix::ObjectId> {
+    let mut new_commit = repo.find_commit(oid)?.decode()?.to_owned();
+    new_commit.tree = new_tree;
+    Ok(commit::create(
+        repo,
+        new_commit,
+        DateMode::CommitterUpdateAuthorKeep,
+    )?)
 }
 
 /// A reference that is an output of a rebase operation.

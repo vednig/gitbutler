@@ -1,23 +1,29 @@
 import AppUpdater from '$components/AppUpdater.svelte';
+import { EventContext } from '$lib/analytics/eventContext';
 import { PostHogWrapper } from '$lib/analytics/posthog';
-import { Tauri } from '$lib/backend/tauri';
-import { UpdaterService } from '$lib/updater/updater';
+import { type Update } from '$lib/backend';
+import { ShortcutService } from '$lib/shortcuts/shortcutService';
+import { mockCreateBackend } from '$lib/testing/mockBackend';
+import { getSettingsdServiceMock } from '$lib/testing/mockSettingsdService';
+import { UPDATER_SERVICE, UpdaterService } from '$lib/updater/updater';
 import { render, screen } from '@testing-library/svelte';
 import { expect, test, describe, vi, beforeEach, afterEach } from 'vitest';
-import type { Update } from '@tauri-apps/plugin-updater';
 
 describe('AppUpdater', () => {
-	let tauri: Tauri;
 	let updater: UpdaterService;
 	let context: Map<any, any>;
-	const posthog = new PostHogWrapper();
+	const backend = mockCreateBackend();
+	const shortcuts = new ShortcutService(backend);
+	const MockSettingsService = getSettingsdServiceMock();
+	const settingsService = new MockSettingsService();
+	const eventContext = new EventContext();
+	const posthog = new PostHogWrapper(settingsService, backend, eventContext);
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		tauri = new Tauri();
-		updater = new UpdaterService(tauri, posthog);
-		context = new Map([[UpdaterService, updater]]);
-		vi.spyOn(tauri, 'listen').mockReturnValue(async () => {});
+		updater = new UpdaterService(backend, posthog, shortcuts);
+		context = new Map([[UPDATER_SERVICE._key, updater]]);
+		vi.spyOn(backend, 'listen').mockReturnValue(async () => {});
 		vi.mock('$env/dynamic/public', () => {
 			return {
 				env: {
@@ -33,23 +39,18 @@ describe('AppUpdater', () => {
 	});
 
 	test('should be hidden if no update', async () => {
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
-			mockUpdate({
-				version: '1'
-			})
-		);
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(mockUpdate(null));
 
 		render(AppUpdater, { context });
 		await vi.advanceTimersToNextTimerAsync();
 
 		const updateBanner = screen.queryByTestId('update-banner');
-		expect(updateBanner).toBeNull();
+		expect(updateBanner).toBe(null);
 	});
 
 	test('should display download button', async () => {
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(
 			mockUpdate({
-				available: true,
 				version: '1',
 				body: 'release notes'
 			})
@@ -62,24 +63,19 @@ describe('AppUpdater', () => {
 		expect(button).toBeVisible();
 	});
 
-	test('should display up-to-date on manaul check', async () => {
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
-			mockUpdate({
-				available: false
-			})
-		);
-		render(AppUpdater, { context });
+	test('should display up-to-date on manual check', async () => {
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(mockUpdate(null));
+		const { getByTestId } = render(AppUpdater, { context });
 		updater.checkForUpdate(true);
 		await vi.advanceTimersToNextTimerAsync();
 
-		const button = screen.getByTestId('got-it');
+		const button = getByTestId('got-it');
 		expect(button).toBeVisible();
 	});
 
 	test('should display restart button on install complete', async () => {
-		vi.spyOn(tauri, 'checkUpdate').mockReturnValue(
+		vi.spyOn(backend, 'checkUpdate').mockReturnValue(
 			mockUpdate({
-				available: true,
 				version: '2',
 				body: 'release notes'
 			})
@@ -96,7 +92,11 @@ describe('AppUpdater', () => {
 	});
 });
 
-async function mockUpdate(update: Partial<Update>): Promise<Update> {
+async function mockUpdate(update: Partial<Update> | null): Promise<Update | null> {
+	if (update === null) {
+		return await Promise.resolve(null);
+	}
+
 	return await Promise.resolve({
 		download: () => {},
 		install: () => {},

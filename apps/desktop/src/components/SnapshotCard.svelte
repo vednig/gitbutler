@@ -1,13 +1,13 @@
 <script lang="ts">
+	import FileList from '$components/FileList.svelte';
+	import ReduxResult from '$components/ReduxResult.svelte';
 	import SnapshotAttachment from '$components/SnapshotAttachment.svelte';
-	import { createdOnDay } from '$lib/history/history';
-	import { ModeService } from '$lib/mode/modeService';
+	import { createdOnDay, HISTORY_SERVICE } from '$lib/history/history';
+	import { MODE_SERVICE } from '$lib/mode/modeService';
 	import { toHumanReadableTime } from '$lib/utils/time';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import FileIcon from '@gitbutler/ui/file/FileIcon.svelte';
-	import { splitFilePath } from '@gitbutler/ui/utils/filePath';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, Icon, ScrollableContainer } from '@gitbutler/ui';
+	import { focusable } from '@gitbutler/ui/focus/focusable';
 	import type { Snapshot, SnapshotDetails } from '$lib/history/types';
 	import type iconsJson from '@gitbutler/ui/data/icons.json';
 
@@ -16,21 +16,10 @@
 		isWithinRestore?: boolean;
 		onRestoreClick: () => void;
 		onDiffClick: (filePath: string) => void;
-		selectedFile?:
-			| {
-					entryId: string;
-					path: string;
-			  }
-			| undefined;
+		projectId: string;
 	}
 
-	const {
-		entry,
-		isWithinRestore = true,
-		selectedFile = undefined,
-		onRestoreClick,
-		onDiffClick
-	}: Props = $props();
+	const { projectId, entry, isWithinRestore = true, onRestoreClick, onDiffClick }: Props = $props();
 
 	function getShortSha(sha: string | undefined) {
 		if (!sha) return '';
@@ -121,9 +110,11 @@
 			case 'SquashCommit':
 				return { text: 'Squash commit', icon: 'squash-commit' };
 			case 'UpdateCommitMessage':
-				return { text: 'Update commit message', icon: 'edit-text' };
+				return { text: 'Update commit message', icon: 'edit' };
 			case 'MoveCommit':
 				return { text: 'Move commit', icon: 'move-commit' };
+			case 'MoveBranch':
+				return { text: 'Move branch', icon: 'move-commit' };
 			case 'ReorderCommit':
 				return { text: 'Reorder commit', icon: 'move-commit' };
 			case 'InsertBlankCommit':
@@ -140,7 +131,7 @@
 			case 'DiscardLines':
 				return { text: 'Discard lines', icon: 'item-cross' };
 			case 'DiscardHunk':
-				return { text: 'Discard hunk', icon: 'item-cross' };
+				return { text: 'Discard change', icon: 'item-cross' };
 			case 'DiscardFile':
 				return { text: 'Discard file', icon: 'discard-file-small' };
 			case 'FileChanges':
@@ -152,9 +143,11 @@
 			case 'UpdateWorkspaceBase':
 				return { text: 'Update workspace base', icon: 'rebase' };
 			case 'EnterEditMode':
-				return { text: 'Enter Edit Mode', icon: 'edit-text' };
+				return { text: 'Enter Edit Mode', icon: 'edit' };
 			case 'RestoreFromSnapshot':
 				return { text: 'Revert snapshot' };
+			case 'SplitBranch':
+				return { text: 'Split branch', icon: 'branch-local' };
 			default:
 				return { text: snapshotDetails.operation, icon: 'commit' };
 		}
@@ -165,13 +158,17 @@
 
 	const operation = mapOperation(entry.details);
 
-	const modeService = getContext(ModeService);
-	const mode = modeService.mode;
+	const modeService = inject(MODE_SERVICE);
+	const mode = $derived(modeService.mode({ projectId }));
+
+	const historyService = inject(HISTORY_SERVICE);
+	const snapshotDiff = $derived(historyService.snapshotDiff({ projectId, snapshotId: entry.id }));
 </script>
 
 <div
 	class="snapshot-card show-restore-on-hover"
 	class:restored-snapshot={isRestoreSnapshot || isWithinRestore}
+	use:focusable={{ focusable: true }}
 >
 	<div class="snapshot-right-container">
 		<div class="restore-btn">
@@ -182,7 +179,7 @@
 				onclick={() => {
 					onRestoreClick();
 				}}
-				disabled={$mode?.type !== 'OpenWorkspace'}>Revert</Button
+				disabled={mode.response?.type !== 'OpenWorkspace'}>Revert</Button
 			>
 		</div>
 		<span class="snapshot-time text-11">
@@ -213,36 +210,30 @@
 			{/if}
 		</div>
 
-		{#if entry.filesChanged.length > 0 && !isRestoreSnapshot}
-			<SnapshotAttachment
-				foldable={entry.filesChanged.length > 2}
-				foldedAmount={entry.filesChanged.length - 2}
-			>
-				<div class="files-attacment">
-					{#each entry.filesChanged as filePath}
-						<button
-							type="button"
-							class="files-attacment__file"
-							class:file-selected={selectedFile?.path === filePath &&
-								selectedFile?.entryId === entry.id}
-							onclick={() => {
-								onDiffClick(filePath);
-							}}
-						>
-							<FileIcon fileName={filePath} size={14} />
-							<div class="text-12 files-attacment__file-path-and-name">
-								<span class="files-attacment__file-name">
-									{splitFilePath(filePath).filename}
-								</span>
-								<span class="files-attacment__file-path">
-									{splitFilePath(filePath).path}
-								</span>
-							</div>
-						</button>
-					{/each}
-				</div>
-			</SnapshotAttachment>
-		{/if}
+		<ReduxResult result={snapshotDiff.result} {projectId}>
+			{#snippet children(files)}
+				{#if files.length > 0 && !isRestoreSnapshot}
+					<SnapshotAttachment
+						foldable={files.length > 2}
+						foldedAmount={files.length}
+						foldedHeight="7rem"
+					>
+						<ScrollableContainer>
+							<FileList
+								selectionId={{ type: 'snapshot', snapshotId: entry.id }}
+								{projectId}
+								stackId={undefined}
+								changes={files}
+								listMode="list"
+								hideLastFileBorder={false}
+								onselect={(change) => onDiffClick(change.path)}
+								allowUnselect={false}
+							/>
+						</ScrollableContainer>
+					</SnapshotAttachment>
+				{/if}
+			{/snippet}
+		</ReduxResult>
 
 		{#if isRestoreSnapshot}
 			<SnapshotAttachment>
@@ -277,17 +268,18 @@
 <style lang="postcss">
 	/* SNAPSHOT CARD */
 	.snapshot-card {
-		position: relative;
 		display: flex;
-		gap: 12px;
+		position: relative;
 		padding: 10px 14px 8px 14px;
 		overflow: hidden;
+		gap: 12px;
 		background-color: var(--clr-bg-1);
 		transition: padding 0.2s;
 	}
 
 	.show-restore-on-hover {
 		&:hover {
+			background-color: var(--clr-bg-1-muted);
 			& .restore-btn {
 				display: flex;
 			}
@@ -295,8 +287,16 @@
 			& .snapshot-time {
 				display: none;
 			}
+		}
+	}
 
-			background-color: var(--clr-bg-2);
+	.show-restore-on-hover:global(.focused) {
+		background-color: var(--clr-bg-1-muted);
+		& .restore-btn {
+			display: flex;
+		}
+		& .snapshot-time {
+			display: none;
 		}
 	}
 
@@ -311,51 +311,49 @@
 	}
 
 	.snapshot-time {
-		color: var(--clr-text-2);
-		text-align: right;
-		line-height: 1.8;
 		margin-top: 2px;
+		color: var(--clr-text-2);
+		line-height: 1.8;
+		text-align: right;
 	}
 
 	.snapshot-line {
-		position: relative;
 		display: flex;
-		align-items: center;
+		position: relative;
 		flex-direction: column;
+		align-items: center;
 		margin-top: 3px;
 
 		&::after {
 			position: absolute;
 			top: 24px;
-			content: '';
+			width: 1px;
 			height: calc(100% - 14px);
 			min-height: 8px;
-			width: 1px;
 			background-color: var(--clr-border-2);
+			content: '';
 		}
 	}
 
 	/* CARD CONTENT */
-
 	.snapshot-content {
-		flex: 1;
 		display: flex;
+		flex: 1;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 6px;
 		min-height: var(--size-tag);
 		overflow: hidden;
-		/* padding-bottom: 4px; */
+		gap: 6px;
 	}
 
 	.snapshot-details {
 		display: flex;
-		width: 100%;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 6px;
+		width: 100%;
 		margin-top: 2px;
 		margin-bottom: 4px;
+		gap: 6px;
 	}
 
 	.snapshot-title {
@@ -363,8 +361,8 @@
 	}
 
 	.snapshot-commit-message {
-		color: var(--clr-text-2);
 		margin-bottom: 2px;
+		color: var(--clr-text-2);
 
 		& span {
 			color: var(--clr-text-3);
@@ -372,63 +370,11 @@
 	}
 
 	.snapshot-sha {
-		white-space: nowrap;
 		color: var(--clr-text-3);
-	}
-
-	/* ATTACHMENT FILES */
-
-	.files-attacment {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.files-attacment__file {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 8px;
-		border-bottom: 1px solid var(--clr-border-3);
-
-		&:not(.file-selected):hover {
-			background-color: var(--clr-bg-1-muted);
-		}
-
-		&:last-child {
-			border-bottom: none;
-		}
-	}
-
-	.file-selected {
-		background-color: var(--clr-theme-pop-bg);
-
-		& .files-attacment__file-name {
-			opacity: 0.9;
-		}
-	}
-
-	.files-attacment__file-path-and-name {
-		display: flex;
-		gap: 6px;
-		overflow: hidden;
-	}
-
-	.files-attacment__file-path {
-		color: var(--clr-text-1);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		opacity: 0.2;
-	}
-
-	.files-attacment__file-name {
-		color: var(--clr-text-1);
-		opacity: 0.6;
 		white-space: nowrap;
 	}
 
 	/* ATTACHMENT RESTORE */
-
 	.restored-attacment {
 		display: flex;
 		padding: 12px;
@@ -453,10 +399,10 @@
 	/* --- */
 	.error-text {
 		display: flex;
-		padding: 6px 10px;
-		background-color: var(--clr-theme-err-bg);
-		border-radius: var(--radius-m);
 		width: 100%;
+		padding: 6px 10px;
+		border-radius: var(--radius-m);
+		background-color: var(--clr-theme-err-bg-muted);
 		color: var(--clr-scale-err-40);
 	}
 </style>

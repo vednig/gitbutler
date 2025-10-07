@@ -1,12 +1,9 @@
 <script lang="ts">
-	import { OrganizationService } from '@gitbutler/shared/organizations/organizationService';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
-	import toasts from '@gitbutler/ui/toasts';
+	import { inject } from '@gitbutler/core/context';
+	import { ORGANIZATION_SERVICE } from '@gitbutler/shared/organizations/organizationService';
+
+	import { Button, Modal, Textarea, Textbox, chipToasts } from '@gitbutler/ui';
 	import { slugify } from '@gitbutler/ui/utils/string';
-	import { getContext } from 'svelte';
 
 	interface Props {
 		organizationSlug: string;
@@ -16,7 +13,7 @@
 	let { organizationSlug, onUpdate = () => {} }: Props = $props();
 
 	// Get organization service from context
-	const organizationService = getContext(OrganizationService) as OrganizationService;
+	const organizationService = inject(ORGANIZATION_SERVICE);
 
 	// Form state
 	let name = $state('');
@@ -49,7 +46,7 @@
 				description = organization.description || '';
 			}
 		} catch (error) {
-			toasts.error(
+			chipToasts.error(
 				`Failed to fetch organization details: ${error instanceof Error ? error.message : 'Unknown error'}`
 			);
 		} finally {
@@ -74,7 +71,7 @@
 				description
 			});
 
-			toasts.success('Organization updated successfully');
+			chipToasts.success('Organization updated successfully');
 
 			// Notify parent component about the update
 			onUpdate(sluggifiedSlug);
@@ -87,7 +84,7 @@
 				window.location.href = window.location.href.replace(originalSlug, sluggifiedSlug);
 			}
 		} catch (error) {
-			toasts.error(
+			chipToasts.error(
 				`Failed to update organization: ${error instanceof Error ? error.message : 'Unknown error'}`
 			);
 		} finally {
@@ -142,8 +139,8 @@
 	}
 
 	.slug-note {
-		font-size: 13px;
-		color: var(--text-muted, #666);
 		margin-top: -12px;
+		color: var(--text-muted, #666);
+		font-size: 13px;
 	}
 </style>

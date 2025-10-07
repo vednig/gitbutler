@@ -1,3 +1,6 @@
+import type { DependencyError, HunkDependencies } from '$lib/dependencies/dependencies';
+import type { HunkAssignment, HunkAssignmentError } from '$lib/hunks/hunk';
+
 /** Contains the changes that are in the worktree */
 export type WorktreeChanges = {
 	/** Changes that could be committed. */
@@ -7,12 +10,16 @@ export type WorktreeChanges = {
 	 * The user can see them and interact with them to clear them out before a commit can be made.
 	 */
 	readonly ignoredChanges: IgnoredChange[];
+	readonly assignments: HunkAssignment[];
+	readonly assignmentsError: HunkAssignmentError | null;
+	readonly dependencies: HunkDependencies | null;
+	readonly dependenciesError: DependencyError | null;
 };
+
 /**
  * An entry in the worktree that changed and thus is eligible to being committed.
  * It either lives (or lived) in the in `.git/index`, or in the `worktree`.
  */
-
 export type TreeChange = {
 	/** The *relative* path in the worktree where the entry can be found.*/
 	readonly path: string;
@@ -23,6 +30,25 @@ export type TreeChange = {
 	readonly pathBytes: number[];
 	/** The specific information about this change.*/
 	readonly status: Status;
+};
+
+export type TreeStats = {
+	/** The total amount of lines added. */
+	readonly linesAdded: number;
+	/** The total amount of lines removed.*/
+	readonly linesRemoved: number;
+	/** The number of files added, removed or modified.*/
+	readonly filesChanged: number;
+};
+
+/**
+ * The list of changes and the stats
+ */
+export type TreeChanges = {
+	/** The changes that were made to the tree. */
+	readonly changes: TreeChange[];
+	/** The stats of the changes. */
+	readonly stats: TreeStats;
 };
 
 export function isTreeChange(something: unknown): something is TreeChange {
@@ -52,7 +78,21 @@ export type Status =
 	| { readonly type: 'Rename'; readonly subject: Rename };
 /** Something was added or scheduled to be added.*/
 
-export function isChangeStatus(something: unknown): something is Status {
+export function isExecutableStatus(status: Status): boolean {
+	switch (status.type) {
+		case 'Addition':
+		case 'Deletion':
+			return false;
+		case 'Modification':
+		case 'Rename':
+			return (
+				status.subject.flags === 'ExecutableBitAdded' ||
+				status.subject.flags === 'ExecutableBitRemoved'
+			);
+	}
+}
+
+function isChangeStatus(something: unknown): something is Status {
 	return (
 		typeof something === 'object' &&
 		something !== null &&
@@ -61,14 +101,14 @@ export function isChangeStatus(something: unknown): something is Status {
 	);
 }
 
-export type Addition = {
+type Addition = {
 	/** @private */
 	readonly state: ChangeState;
 	readonly isUntracked: boolean;
 };
 /** Something was deleted.*/
 
-export type Deletion = {
+type Deletion = {
 	/** @private */
 	readonly previousState: ChangeState;
 };
@@ -86,6 +126,7 @@ export type Modification = {
  */
 export type Rename = {
 	readonly previousPath: string;
+	readonly previousPathBytes: number[];
 	/** @private */
 	readonly previousState: ChangeState;
 	/** @private */
@@ -112,7 +153,7 @@ export type IgnoredChange = {
 };
 
 /** The status we can't handle.*/
-export type IgnoredChangeStatus =
+type IgnoredChangeStatus =
 	/** A conflicting entry in the index. The worktree state of the entry is unclear.*/
 	| 'Conflict'
 	/** A change in the `.git/index` that was overruled by a change to the same path in the *worktree*.*/

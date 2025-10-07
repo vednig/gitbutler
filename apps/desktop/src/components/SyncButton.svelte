@@ -1,60 +1,92 @@
 <script lang="ts">
-	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
-	import { BranchListingService } from '$lib/branches/branchListing';
-	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button, { type Props as ButtonProps } from '@gitbutler/ui/Button.svelte';
-	import TimeAgo from '@gitbutler/ui/TimeAgo.svelte';
+	import { BASE_BRANCH_SERVICE } from '$lib/baseBranch/baseBranchService.svelte';
+	import { BRANCH_SERVICE } from '$lib/branches/branchService.svelte';
+	import { DEFAULT_FORGE_FACTORY } from '$lib/forge/forgeFactory.svelte';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, TimeAgo, Icon, TestId } from '@gitbutler/ui';
 
 	interface Props {
 		projectId: string;
-		size?: ButtonProps['size'];
+		disabled?: boolean;
 	}
 
-	const { projectId, size = 'tag' }: Props = $props();
+	const { projectId, disabled = false }: Props = $props();
 
-	const baseBranchService = getContext(BaseBranchService);
-	const baseBranch = baseBranchService.base;
-	const branchListingService = getContext(BranchListingService);
+	const baseBranchService = inject(BASE_BRANCH_SERVICE);
+	const branchService = inject(BRANCH_SERVICE);
+	const baseBranch = $derived(baseBranchService.baseBranch(projectId));
 
-	const forge = getContext(DefaultForgeFactory);
+	const forge = inject(DEFAULT_FORGE_FACTORY);
 	const listingService = $derived(forge.current.listService);
+
+	const lastFetched = $derived(baseBranch.result.data?.lastFetched);
 
 	let loading = $state(false);
 </script>
 
 <Button
-	{size}
-	reversedDirection
+	testId={TestId.SyncButton}
 	kind="outline"
-	icon="update"
+	width="auto"
 	tooltip="Last fetch from upstream"
 	{loading}
-	onmousedown={async (e: MouseEvent) => {
+	{disabled}
+	icon="update"
+	reversedDirection
+	onclick={async (e: MouseEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		loading = true;
 		try {
-			await baseBranchService.fetchFromRemotes('modal');
+			await baseBranchService.fetchFromRemotes(projectId, 'modal');
 			await Promise.all([
 				listingService?.refresh(projectId),
-				baseBranchService.refresh(),
-				branchListingService.refresh()
+				baseBranch.result?.refetch(),
+				branchService.refresh()
 			]);
 		} finally {
 			loading = false;
 		}
 	}}
 >
-	{#if loading}
-		<div class="sync-btn__busy-label">busy…</div>
-	{:else if $baseBranch?.lastFetched}
-		<TimeAgo date={$baseBranch?.lastFetched} addSuffix={true} />
-	{/if}
+	<span class="capitalize">
+		{#if loading}
+			Fetching...
+		{:else if lastFetched}
+			<TimeAgo date={lastFetched} addSuffix={true} />
+		{:else}
+			Refetch
+		{/if}
+	</span>
+
+	{#snippet custom()}
+		{#if baseBranch.response}
+			<div class="target-branch">
+				<Icon name="remote-target-branch" color="var(--clr-text-2)" />
+				<span class="text-12 text-semibold">
+					{baseBranch.response.remoteName}/{baseBranch.response.shortName}
+				</span>
+			</div>
+		{/if}
+	{/snippet}
 </Button>
 
 <style lang="postcss">
-	.sync-btn__busy-label {
-		padding-left: 4px;
+	.target-branch {
+		display: inline-flex;
+		align-items: center;
+		padding-right: 2px;
+		gap: 4px;
+		color: var(--clr-text-2);
+
+		&:after {
+			display: inline-block;
+			width: 1px;
+			height: 12px;
+			margin: 0 2px 0 4px;
+			background-color: var(--clr-text-2);
+			content: '';
+			opacity: 0.5;
+		}
 	}
 </style>

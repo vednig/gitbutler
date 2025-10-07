@@ -1,17 +1,17 @@
 use std::{path::Path, time};
 
 use crate::{
-    conflicts::RepoConflictsExt,
     hunk::VirtualBranchHunk,
     integration::update_workspace_commit,
     remote::{commit_to_remote_commit, RemoteCommit},
     VirtualBranchesExt,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
+use but_workspace::branch::checkout::UncommitedWorktreeChanges;
 use gitbutler_branch::GITBUTLER_WORKSPACE_REFERENCE;
 use gitbutler_command_context::CommandContext;
 use gitbutler_error::error::Marker;
-use gitbutler_oxidize::{git2_to_gix_object_id, gix_to_git2_oid, GixRepositoryExt};
+use gitbutler_oxidize::{ObjectIdExt, OidExt};
 use gitbutler_project::FetchResult;
 use gitbutler_reference::{Refname, RemoteRefname};
 use gitbutler_repo::{
@@ -19,7 +19,9 @@ use gitbutler_repo::{
     RepositoryExt,
 };
 use gitbutler_repo_actions::RepoActionsExt;
-use gitbutler_stack::{BranchOwnershipClaims, Stack, Target, VirtualBranchesHandle};
+use gitbutler_stack::{
+    canned_branch_name, BranchOwnershipClaims, Stack, Target, VirtualBranchesHandle,
+};
 use serde::Serialize;
 use tracing::instrument;
 
@@ -54,59 +56,43 @@ pub fn get_base_branch_data(ctx: &CommandContext) -> Result<BaseBranch> {
     Ok(base)
 }
 
+#[instrument(skip(ctx), err(Debug))]
 fn go_back_to_integration(ctx: &CommandContext, default_target: &Target) -> Result<BaseBranch> {
-    let repo = ctx.repo();
-    let statuses = repo
-        .statuses(Some(
-            git2::StatusOptions::new()
-                .show(git2::StatusShow::IndexAndWorkdir)
-                .include_untracked(true),
-        ))
-        .context("failed to get status")?;
-    if !statuses.is_empty() {
-        return Err(anyhow!("current HEAD is dirty")).context(Marker::ProjectConflict);
-    }
-
-    let vb_state = ctx.project().virtual_branches();
-    let virtual_branches = vb_state
-        .list_stacks_in_workspace()
-        .context("failed to read virtual branches")?;
-
-    let target_commit = repo
-        .find_commit(default_target.sha)
-        .context("failed to find target commit")?;
-
-    let base_tree = git2_to_gix_object_id(target_commit.tree_id());
-    let mut final_tree_id = git2_to_gix_object_id(target_commit.tree_id());
-    let gix_repo = ctx.gix_repository_for_merging()?;
-    let (merge_options_fail_fast, conflict_kind) = gix_repo.merge_options_fail_fast()?;
-    for branch in &virtual_branches {
-        // merge this branches tree with our tree
-        let branch_tree_id = git2_to_gix_object_id(
-            repo.find_commit(branch.head())
-                .context("failed to find branch head")?
-                .tree_id(),
-        );
-        let mut merge = gix_repo.merge_trees(
-            base_tree,
-            final_tree_id,
-            branch_tree_id,
-            gix_repo.default_merge_labels(),
-            merge_options_fail_fast.clone(),
+    let gix_repo = ctx.gix_repo_for_merging()?;
+    if ctx.app_settings().feature_flags.cv3 {
+        let workspace_commit_to_checkout = but_workspace::remerged_workspace_commit_v2(ctx)?;
+        let tree_to_checkout_to_avoid_ref_update = gix_repo
+            .find_commit(workspace_commit_to_checkout.to_gix())?
+            .tree_id()?;
+        but_workspace::branch::safe_checkout(
+            gix_repo.head_id()?.detach(),
+            tree_to_checkout_to_avoid_ref_update.detach(),
+            &gix_repo,
+            but_workspace::branch::checkout::Options {
+                uncommitted_changes: UncommitedWorktreeChanges::KeepAndAbortOnConflict,
+            },
         )?;
-        if merge.has_unresolved_conflicts(conflict_kind) {
-            bail!("Merge failed with conflicts");
-        }
-        final_tree_id = merge.tree.write()?.detach();
-    }
+    } else {
+        let (mut outcome, conflict_kind) =
+            but_workspace::merge_worktree_with_workspace(ctx, &gix_repo)?;
 
-    let final_tree = repo.find_tree(gix_to_git2_oid(final_tree_id))?;
-    repo.checkout_tree_builder(&final_tree)
-        .force()
-        .checkout()
-        .context("failed to checkout tree")?;
+        if outcome.has_unresolved_conflicts(conflict_kind) {
+            return Err(anyhow!("Conflicts while going back to gitbutler/workspace"))
+                .context(Marker::ProjectConflict);
+        }
+
+        let final_tree_id = outcome.tree.write()?.detach();
+
+        let repo = ctx.repo();
+        let final_tree = repo.find_tree(final_tree_id.to_git2())?;
+        repo.checkout_tree_builder(&final_tree)
+            .force()
+            .checkout()
+            .context("failed to checkout tree")?;
+    }
 
     let base = target_to_base_branch(ctx, default_target)?;
+    let vb_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
     update_workspace_commit(&vb_state, ctx)?;
     Ok(base)
 }
@@ -114,8 +100,18 @@ fn go_back_to_integration(ctx: &CommandContext, default_target: &Target) -> Resu
 pub(crate) fn set_base_branch(
     ctx: &CommandContext,
     target_branch_ref: &RemoteRefname,
+    stash_uncommitted: bool,
 ) -> Result<BaseBranch> {
     let repo = ctx.repo();
+
+    // If requested, stash uncommitted changes
+    if stash_uncommitted {
+        let sig = repo
+            .signature()
+            .unwrap_or(git2::Signature::now("Author", "author@email.com")?);
+        let mut r = git2::Repository::open(ctx.project().path.clone())?;
+        r.stash_save2(&sig, None, Some(git2::StashFlags::INCLUDE_UNTRACKED))?;
+    }
 
     // if target exists, and it is the same as the requested branch, we should go back
     if let Ok(target) = default_target(&ctx.project().gb_dir()) {
@@ -202,48 +198,53 @@ pub(crate) fn set_base_branch(
                 },
             );
 
-            let (upstream, upstream_head) = if let Refname::Local(head_name) = &head_name {
-                let upstream_name = target_branch_ref.with_branch(head_name.branch());
-                if upstream_name.eq(target_branch_ref) {
-                    (None, None)
-                } else {
-                    match repo.find_reference(&Refname::from(&upstream_name).to_string()) {
-                        Ok(upstream) => {
-                            let head = upstream
-                                .peel_to_commit()
-                                .map(|commit| commit.id())
-                                .context(format!(
-                                    "failed to peel upstream {} to commit",
-                                    upstream.name().unwrap()
-                                ))?;
-                            Ok((Some(upstream_name), Some(head)))
+            let (upstream, upstream_head, branch_matches_target) =
+                if let Refname::Local(head_name) = &head_name {
+                    let upstream_name = target_branch_ref.with_branch(head_name.branch());
+                    if upstream_name.eq(target_branch_ref) {
+                        (None, None, true)
+                    } else {
+                        match repo.find_reference(&Refname::from(&upstream_name).to_string()) {
+                            Ok(upstream) => {
+                                let head = upstream
+                                    .peel_to_commit()
+                                    .map(|commit| commit.id())
+                                    .context(format!(
+                                        "failed to peel upstream {} to commit",
+                                        upstream.name().unwrap()
+                                    ))?;
+                                Ok((Some(upstream_name), Some(head), false))
+                            }
+                            Err(err) if err.code() == git2::ErrorCode::NotFound => {
+                                Ok((None, None, false))
+                            }
+                            Err(error) => Err(error),
                         }
-                        Err(err) if err.code() == git2::ErrorCode::NotFound => Ok((None, None)),
-                        Err(error) => Err(error),
+                        .context(format!("failed to find upstream for {head_name}"))?
                     }
-                    .context(format!("failed to find upstream for {}", head_name))?
-                }
+                } else {
+                    (None, None, false)
+                };
+
+            let branch_name = if branch_matches_target {
+                canned_branch_name(repo)?
             } else {
-                (None, None)
+                head_name.to_string().replace("refs/heads/", "")
             };
 
             let mut branch = Stack::create(
                 ctx,
-                head_name.to_string().replace("refs/heads/", ""),
+                branch_name,
                 Some(head_name),
                 upstream,
                 upstream_head,
-                gitbutler_diff::write::hunks_onto_commit(
-                    ctx,
-                    current_head_commit.id(),
-                    gitbutler_diff::diff_files_into_hunks(&wd_diff),
-                )?,
+                current_head_commit.tree_id(),
                 current_head_commit.id(),
                 0,
                 None,
                 ctx.project().ok_with_force_push.into(),
-                true, // allow duplicate name since here we are creating a lane from an existing branch
-            );
+                !branch_matches_target, // allow duplicate name since here we are creating a lane from an existing branch
+            )?;
             branch.ownership = ownership;
 
             vb_state.set_stack(branch)?;
@@ -262,7 +263,7 @@ pub(crate) fn set_target_push_remote(ctx: &CommandContext, push_remote_name: &st
     let remote = ctx
         .repo()
         .find_remote(push_remote_name)
-        .context(format!("failed to find remote {}", push_remote_name))?;
+        .context(format!("failed to find remote {push_remote_name}"))?;
 
     // if target exists, and it is the same as the requested branch, we should go back
     let mut target = default_target(&ctx.project().gb_dir())?;
@@ -299,7 +300,7 @@ fn _print_tree(repo: &git2::Repository, tree: &git2::Tree) -> Result<()> {
         let blob = object.as_blob().context("failed to get blob")?;
         // convert content to string
         if let Ok(content) = std::str::from_utf8(blob.content()) {
-            println!("    blob: {}", content);
+            println!("    blob: {content}");
         } else {
             println!("    blob: BINARY");
         }
@@ -366,10 +367,25 @@ pub(crate) fn target_to_base_branch(ctx: &CommandContext, target: &Target) -> Re
         None => target.remote_url.clone(),
     };
 
+    // Fallback to the remote URL of the branch if the target remote URL is empty
+    let remote_url = if target.remote_url.is_empty() {
+        let remote = repo.find_remote(target.branch.remote()).context(format!(
+            "failed to find remote for branch {}",
+            target.branch.fullname()
+        ))?;
+        let remote_url = remote.url().context(format!(
+            "failed to get remote url for {}",
+            target.branch.fullname()
+        ))?;
+        remote_url.to_string()
+    } else {
+        target.remote_url.clone()
+    };
+
     let base = BaseBranch {
         branch_name: target.branch.fullname(),
         remote_name: target.branch.remote().to_string(),
-        remote_url: target.remote_url.clone(),
+        remote_url,
         push_remote_name: target.push_remote_name.clone(),
         push_remote_url,
         base_sha: target.sha,
@@ -397,8 +413,14 @@ fn default_target(base_path: &Path) -> Result<Target> {
 }
 
 pub(crate) fn push(ctx: &CommandContext, with_force: bool) -> Result<()> {
-    ctx.assure_resolved()?;
     let target = default_target(&ctx.project().gb_dir())?;
-    let _ = ctx.push(target.sha, &target.branch, with_force, None, None);
+    let _ = ctx.push(
+        target.sha,
+        &target.branch,
+        with_force,
+        ctx.project().force_push_protection,
+        None,
+        None,
+    );
     Ok(())
 }

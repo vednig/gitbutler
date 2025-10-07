@@ -1,4 +1,4 @@
-import { copyToClipboard } from '@gitbutler/shared/clipboard';
+import { copyToClipboard } from '@gitbutler/ui/utils/clipboard';
 import {
 	readDiffLineKey,
 	type DiffLineKey,
@@ -11,7 +11,7 @@ import {
 import { SvelteSet } from 'svelte/reactivity';
 import type { ChatMinimize } from '$lib/chat/minimize.svelte';
 import type { DiffPatch } from '@gitbutler/shared/chat/types';
-import type { LineClickParams } from '@gitbutler/ui/HunkDiff.svelte';
+import type { LineClickParams } from '@gitbutler/ui';
 import type { ContentSection, DiffFileLineId, LineSelector } from '@gitbutler/ui/utils/diffParsing';
 
 export interface DiffLineSelected extends LineSelector {

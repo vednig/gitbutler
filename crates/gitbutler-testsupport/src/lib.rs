@@ -1,6 +1,8 @@
-#![forbid(rust_2018_idioms)]
 pub const VAR_NO_CLEANUP: &str = "GITBUTLER_TESTS_NO_CLEANUP";
 
+use but_graph::VirtualBranchesTomlMetadata;
+use but_workspace::{ui::StackDetails, StackId, StacksFilter};
+use gitbutler_command_context::CommandContext;
 use gix::bstr::BStr;
 /// Direct access to lower-level utilities for cases where this is enough.
 ///
@@ -79,8 +81,17 @@ pub mod writable {
         script_name: &str,
         project_directory: &str,
     ) -> anyhow::Result<(CommandContext, TempDir)> {
+        fixture_with_settings(script_name, project_directory, |_| {})
+    }
+    pub fn fixture_with_settings(
+        script_name: &str,
+        project_directory: &str,
+        change_settings: fn(&mut AppSettings),
+    ) -> anyhow::Result<(CommandContext, TempDir)> {
         let (project, tempdir) = fixture_project(script_name, project_directory)?;
-        let open = CommandContext::open(&project, AppSettings::default());
+        let mut settings = AppSettings::default();
+        change_settings(&mut settings);
+        let open = CommandContext::open(&project, settings);
         let ctx = open?;
         Ok((ctx, tempdir))
     }
@@ -129,7 +140,7 @@ pub fn visualize_gix_tree(tree_id: gix::Id<'_>) -> termtree::Tree<String> {
                             mode = if mode.is_tree() {
                                 "".into()
                             } else {
-                                format!("{:o}:", mode.0)
+                                format!("{:o}:", mode.value())
                             }
                         )
                     }
@@ -162,8 +173,43 @@ pub fn visualize_git2_tree(tree_id: git2::Oid, repo: &git2::Repository) -> termt
     visualize_gix_tree(git2_to_gix_object_id(tree_id).attach(&repo))
 }
 
+pub fn stack_details(ctx: &CommandContext) -> Vec<(StackId, StackDetails)> {
+    let repo = ctx.gix_repo_for_merging_non_persisting().unwrap();
+    let stacks = if ctx.app_settings().feature_flags.ws3 {
+        let meta = VirtualBranchesTomlMetadata::from_path(
+            ctx.project().gb_dir().join("virtual_branches.toml"),
+        )
+        .unwrap();
+        but_workspace::stacks_v3(&repo, &meta, StacksFilter::default(), None)
+    } else {
+        but_workspace::stacks(ctx, &ctx.project().gb_dir(), &repo, StacksFilter::default())
+    }
+    .unwrap();
+    let mut details = vec![];
+    for stack in stacks {
+        let stack_id = stack
+            .id
+            .expect("BUG(opt-stack-id): test code shouldn't trigger this");
+        details.push((
+            stack_id,
+            if ctx.app_settings().feature_flags.ws3 {
+                let meta = VirtualBranchesTomlMetadata::from_path(
+                    ctx.project().gb_dir().join("virtual_branches.toml"),
+                )
+                .unwrap();
+                but_workspace::stack_details_v3(stack_id.into(), &repo, &meta)
+            } else {
+                but_workspace::stack_details(&ctx.project().gb_dir(), stack_id, ctx)
+            }
+            .unwrap(),
+        ));
+    }
+    details
+}
+
 pub mod read_only {
     use crate::DRIVER;
+    use but_settings::app_settings::FeatureFlags;
     use but_settings::AppSettings;
     use gitbutler_command_context::CommandContext;
     use gitbutler_project::{Project, ProjectId};
@@ -181,6 +227,22 @@ pub mod read_only {
     pub fn fixture(script_name: &str, project_directory: &str) -> anyhow::Result<CommandContext> {
         let project = fixture_project(script_name, project_directory)?;
         CommandContext::open(&project, AppSettings::default())
+    }
+
+    /// As [fixture()], but allows setting `features` in the app settings
+    pub fn fixture_with_features(
+        script_name: &str,
+        project_directory: &str,
+        features: FeatureFlags,
+    ) -> anyhow::Result<CommandContext> {
+        let project = fixture_project(script_name, project_directory)?;
+        CommandContext::open(
+            &project,
+            AppSettings {
+                feature_flags: features,
+                ..Default::default()
+            },
+        )
     }
 
     /// Like [`fixture()`], but will return only the `Project` at `project_directory` after executing `script_name`.
@@ -201,7 +263,9 @@ pub mod read_only {
         // Assure the project is valid the first time.
         let project = if was_inserted {
             let tmp = tempfile::TempDir::new()?;
-            gitbutler_project::Controller::from_path(tmp.path()).add(project_worktree_dir)?
+            let outcome =
+                gitbutler_project::add_with_path(tmp.path(), project_worktree_dir.as_path())?;
+            outcome.try_project()?
         } else {
             Project {
                 id: ProjectId::generate(),

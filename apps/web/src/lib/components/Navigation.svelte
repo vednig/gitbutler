@@ -1,31 +1,25 @@
 <script lang="ts">
-	import { AuthService } from '$lib/auth/authService.svelte';
-	import Breadcrumbs from '$lib/components/breadcrumbs/Breadcrumbs.svelte';
-	import { featureShowOrganizations } from '$lib/featureFlags';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import { WebRoutesService } from '@gitbutler/shared/routing/webRoutes.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import NotificationButton from '@gitbutler/ui/NotificationButton.svelte';
 	import { goto } from '$app/navigation';
+	import { AUTH_SERVICE } from '$lib/auth/authService.svelte';
+	import Breadcrumbs from '$lib/components/chat/Breadcrumbs.svelte';
+	import { featureShowOrganizations } from '$lib/featureFlags';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
+	import { WEB_ROUTES_SERVICE } from '@gitbutler/shared/routing/webRoutes.svelte';
+	import { Button, ContextMenu, ContextMenuItem, ContextMenuSection, Icon } from '@gitbutler/ui';
+
 	import { env } from '$env/dynamic/public';
 
-	const authService = getContext(AuthService);
+	const authService = inject(AUTH_SERVICE);
 	const token = $derived(authService.tokenReadable);
 
-	const userService = getContext(UserService);
+	const userService = inject(USER_SERVICE);
 	const user = $derived(userService.user);
-	const routes = getContext(WebRoutesService);
+	const routes = inject(WEB_ROUTES_SERVICE);
 
 	let ctxMenuUserEl = $state<ReturnType<typeof ContextMenu>>();
 	let ctxUserTriggerButton = $state<HTMLButtonElement | undefined>();
 	let isCtxMenuOpen = $state(false);
-
-	let isNotificationsUnread = $state(false);
 
 	function login() {
 		window.location.href = `${env.PUBLIC_APP_HOST}cloud/login?callback=${window.location.href}`;
@@ -55,26 +49,7 @@
 	</div>
 
 	<div class="other-links">
-		{#if routes.isProjectReviewBranchPageSubset}
-			<Button
-				kind="outline"
-				icon="dashboard"
-				reversedDirection
-				onclick={() => goto(routes.projectsPath())}
-			>
-				Dashboard
-			</Button>
-		{/if}
-
 		{#if $user}
-			<NotificationButton
-				hasUnread={isNotificationsUnread}
-				onclick={() => {
-					// TODO: implement notifications
-					isNotificationsUnread = !isNotificationsUnread;
-				}}
-			/>
-
 			<Button
 				kind="outline"
 				class="user-btn"
@@ -115,7 +90,7 @@
 	bind:this={ctxMenuUserEl}
 	leftClickTrigger={ctxUserTriggerButton}
 	side="right"
-	verticalAlign="bottom"
+	align="end"
 	ontoggle={(isOpen) => (isCtxMenuOpen = isOpen)}
 >
 	<ContextMenuSection>
@@ -165,11 +140,11 @@
 	}
 
 	.main-links {
-		flex: 1;
 		display: flex;
+		flex: 1;
 		align-items: center;
-		gap: 16px;
 		overflow: hidden;
+		gap: 16px;
 	}
 
 	.logo {
@@ -203,9 +178,9 @@
 
 	.user-select-icon {
 		display: flex;
+		margin-right: 2px;
 		color: var(--label-clr);
 		opacity: var(--icon-opacity);
-		margin-right: 2px;
 		transition:
 			opacity var(--transition-fast),
 			stroke var(--transition-fast);
@@ -214,8 +189,8 @@
 	.user-icon {
 		width: 20px;
 		height: 20px;
-		border-radius: var(--radius-s);
 		overflow: hidden;
+		border-radius: var(--radius-s);
 	}
 
 	/* login */

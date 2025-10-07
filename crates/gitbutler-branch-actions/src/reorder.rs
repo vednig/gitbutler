@@ -1,19 +1,12 @@
-use std::collections::HashMap;
-
 use anyhow::{bail, Context, Result};
 use but_rebase::{RebaseOutput, RebaseStep};
-use git2::{Commit, Oid};
+use git2::Oid;
 use gitbutler_command_context::CommandContext;
 use gitbutler_oxidize::{ObjectIdExt, OidExt};
 use gitbutler_project::access::WorktreeWritePermission;
-use gitbutler_stack::{
-    stack_context::{CommandContextExt, StackContext},
-    Stack, StackId,
-};
+use gitbutler_stack::{Stack, StackId};
 
-use gitbutler_workspace::{
-    checkout_branch_trees, compute_updated_branch_head_for_commits, BranchHeadAndTree,
-};
+use gitbutler_workspace::branch_trees::{update_uncommited_changes, WorkspaceState};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -36,18 +29,22 @@ pub fn reorder_stack(
     new_order: StackOrder,
     perm: &mut WorktreeWritePermission,
 ) -> Result<RebaseOutput> {
+    let old_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
     let state = ctx.project().virtual_branches();
     let repo = ctx.repo();
     let mut stack = state.get_stack(stack_id)?;
-    let current_order = commits_order(&ctx.to_stack_context()?, &stack)?;
+    let current_order = commits_order(ctx, &stack)?;
     new_order.validate(current_order.clone())?;
 
+    let gix_repo = ctx.gix_repo()?;
     let default_target = state.get_default_target()?;
     let default_target_commit = repo
         .find_reference(&default_target.branch.to_string())?
         .peel_to_commit()?;
-    let old_head = repo.find_commit(stack.head())?;
-    let merge_base = repo.merge_base(default_target_commit.id(), stack.head())?;
+    let merge_base = repo.merge_base(
+        default_target_commit.id(),
+        stack.head_oid(&gix_repo)?.to_git2(),
+    )?;
 
     let mut steps: Vec<RebaseStep> = Vec::new();
     for series in new_order.series.iter().rev() {
@@ -61,7 +58,6 @@ pub fn reorder_stack(
             series.name.clone(),
         )));
     }
-    let gix_repo = ctx.gix_repository()?;
     let mut builder = but_rebase::Rebase::new(&gix_repo, merge_base.to_gix(), None)?;
     let builder = builder.steps(steps)?;
     builder.rebase_noops(false);
@@ -69,26 +65,14 @@ pub fn reorder_stack(
 
     let new_head = output.top_commit.to_git2();
 
-    // Calculate the new head and tree
-    let BranchHeadAndTree {
-        head: new_head_oid,
-        tree: new_tree_oid,
-    } = compute_updated_branch_head_for_commits(repo, old_head.id(), stack.tree, new_head)?;
-
     // Ensure the stack head is set to the new oid after rebasing
-    stack.set_stack_head(ctx, new_head_oid, Some(new_tree_oid))?;
+    stack.set_stack_head(&state, &gix_repo, new_head, None)?;
 
-    let mut new_heads: HashMap<String, Commit<'_>> = HashMap::new();
-    for reference in &output.references {
-        let commit = repo.find_commit(reference.commit_id.to_git2())?;
-        if let but_core::Reference::Virtual(name) = &reference.reference {
-            new_heads.insert(name.clone(), commit);
-        }
-    }
-    // Set the series heads accordingly in one go
-    stack.set_all_heads(ctx, new_heads)?;
+    stack.set_heads_from_rebase_output(ctx, output.references.clone())?;
 
-    checkout_branch_trees(ctx, perm)?;
+    let new_workspace = WorkspaceState::create(ctx, perm.read_permission())?;
+    // Even if this fails, it's not actionable
+    let _ = update_uncommited_changes(ctx, old_workspace, new_workspace, perm);
     crate::integration::update_workspace_commit(&state, ctx)
         .context("failed to update gitbutler workspace")?;
 
@@ -194,7 +178,7 @@ impl StackOrder {
     }
 }
 
-pub fn commits_order(stack_context: &StackContext, stack: &Stack) -> Result<StackOrder> {
+pub fn commits_order(ctx: &CommandContext, stack: &Stack) -> Result<StackOrder> {
     let order: Result<Vec<SeriesOrder>> = stack
         .branches()
         .iter()
@@ -204,7 +188,7 @@ pub fn commits_order(stack_context: &StackContext, stack: &Stack) -> Result<Stac
             Ok(SeriesOrder {
                 name: b.name().to_owned(),
                 commit_ids: b
-                    .commits(stack_context, stack)?
+                    .commits(ctx, stack)?
                     .local_commits
                     .iter()
                     .rev()

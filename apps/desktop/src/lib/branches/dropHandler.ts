@@ -1,57 +1,46 @@
-import { type BranchStack } from '$lib/branches/branch';
-import { filesToOwnership } from '$lib/branches/ownership';
-import { HunkDropData, FileDropData } from '$lib/dragging/draggables';
-import { LocalFile } from '$lib/files/file';
-import type { BranchController } from '$lib/branches/branchController';
 import type { DropzoneHandler } from '$lib/dragging/handler';
+import type { StackService } from '$lib/stacks/stackService.svelte';
 
-/** Handler that moves uncommitted hunks between stacks. */
-export class BranchDzHandler implements DropzoneHandler {
+export class BranchDropData {
 	constructor(
-		private branchController: BranchController,
-		private stack: BranchStack
+		readonly stackId: string,
+		readonly branchName: string,
+		readonly hasConflicts: boolean,
+		readonly numberOfCommits: number
 	) {}
 
-	accepts(data: unknown) {
-		return (
-			data instanceof HunkDropData &&
-			!data.commitId &&
-			!data.hunk.locked &&
-			data.branchId !== this.stack.id
-		);
-	}
-
-	ondrop(data: HunkDropData) {
-		const newOwnership = `${data.hunk.filePath}:${data.hunk.id}`;
-		this.branchController.updateBranchOwnership(
-			this.stack.id,
-			(newOwnership + '\n' + this.stack.ownership).trim()
-		);
+	print(): string {
+		return `BranchDropData(${this.stackId}, ${this.branchName}, ${this.hasConflicts})`;
 	}
 }
 
-/** Handler that moves uncommitted files between stacks. */
-export class BranchFileDzHandler implements DropzoneHandler {
+export class MoveBranchDzHandler implements DropzoneHandler {
 	constructor(
-		private branchController: BranchController,
-		private stackId: string,
-		private ownership: string
+		private readonly stackService: StackService,
+		private readonly projectId: string,
+		private readonly stackId: string,
+		private readonly branchName: string
 	) {}
 
-	accepts(data: unknown) {
-		return (
-			data instanceof FileDropData &&
-			data.file instanceof LocalFile &&
-			this.stackId !== data.stackId &&
-			!data.files.some((f) => f.locked)
-		);
+	print(): string {
+		return `MoveBranchDzHandler(${this.projectId}, ${this.stackId}, ${this.branchName})`;
 	}
 
-	ondrop(data: FileDropData) {
-		const newOwnership = filesToOwnership(data.files);
-		this.branchController.updateBranchOwnership(
-			this.stackId,
-			(newOwnership + '\n' + this.ownership).trim()
+	accepts(data: unknown): boolean {
+		return (
+			data instanceof BranchDropData &&
+			data.stackId !== this.stackId &&
+			!data.hasConflicts &&
+			data.numberOfCommits > 0 // TODO: If trying to move an empty branch, we should just delete the reference and recreate it.
 		);
+	}
+	ondrop(data: BranchDropData): void {
+		this.stackService.moveBranch({
+			projectId: this.projectId,
+			sourceStackId: data.stackId,
+			subjectBranchName: data.branchName,
+			targetBranchName: this.branchName,
+			targetStackId: this.stackId
+		});
 	}
 }

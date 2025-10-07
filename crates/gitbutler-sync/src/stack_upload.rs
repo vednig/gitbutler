@@ -1,5 +1,3 @@
-#![forbid(rust_2018_idioms)]
-
 use anyhow::{bail, Result};
 // A happy little module for uploading stacks.
 
@@ -8,10 +6,7 @@ use gitbutler_commit::commit_headers::HasCommitHeaders as _;
 use gitbutler_oplog::reflog::{set_reference_to_oplog, ReflogCommits};
 use gitbutler_oxidize::{git2_signature_to_gix_signature, ObjectIdExt, OidExt as _};
 use gitbutler_repo::{commit_message::CommitMessage, signature};
-use gitbutler_stack::{
-    stack_context::{CommandContextExt, StackContext},
-    Stack, StackId, VirtualBranchesHandle,
-};
+use gitbutler_stack::{Stack, StackId, VirtualBranchesHandle};
 use gitbutler_user::User;
 use gix::bstr::ByteSlice;
 use rand::Rng;
@@ -27,18 +22,17 @@ pub fn push_stack_to_review(
 ) -> Result<String> {
     let vb_state = VirtualBranchesHandle::new(ctx.project().gb_dir());
     let mut stack = vb_state.get_stack(stack_id)?;
-    let repository = ctx.gix_repository()?;
+    let repo = ctx.gix_repo()?;
     // We set the stack immediatly after because it might be an old stack that
     // dosn't yet have review_ids assigned. When reading they will have been
     // assigned new review_ids, so we just need to persist them here.
     vb_state.set_stack(stack.clone())?;
-    let stack_context = ctx.to_stack_context()?;
 
-    let branch_heads = branch_heads(&vb_state, &mut stack, &stack_context, top_branch)?;
+    let branch_heads = branch_heads(&vb_state, &mut stack, &repo, top_branch)?;
     let Some(top_branch) = branch_heads.first() else {
         bail!("No branches to be pushed.");
     };
-    let Some(review_base_id) = vb_state.upsert_last_pushed_base(&repository)? else {
+    let Some(review_base_id) = vb_state.upsert_last_pushed_base(&repo)? else {
         bail!("This is impossible. If you got here, I'm sorry.");
     };
     set_reference_to_oplog(&ctx.project().path, ReflogCommits::new(ctx.project())?)?;
@@ -52,8 +46,7 @@ pub fn push_stack_to_review(
         .filter_map(|commit| Some(commit.ok()?.to_gix()))
         .collect::<Vec<_>>();
 
-    let review_head =
-        format_stack_for_review(&repository, &commits, &branch_heads, review_base_id)?;
+    let review_head = format_stack_for_review(&repo, &commits, &branch_heads, review_base_id)?;
 
     let refspec = format_refspec(&review_head);
 
@@ -61,14 +54,14 @@ pub fn push_stack_to_review(
     push_to_gitbutler_server(ctx, Some(user), &[&refspec], remote)?;
 
     let Some(head_review) = branch_heads.first() else {
-        bail!("No head review id. Congratuations, this is not possible")
+        bail!("No head review id. Congratulations, this is not possible")
     };
 
     Ok(head_review.review_id.clone())
 }
 
 fn format_refspec(sha: &gix::ObjectId) -> String {
-    format!("+{}:refs/review/publish", sha)
+    format!("+{sha}:refs/review/publish")
 }
 
 struct BranchHead {
@@ -84,19 +77,18 @@ fn generate_review_id() -> String {
     let letters = (0..8)
         .map(|_| rng.sample(rand::distr::Alphanumeric) as char)
         .collect::<String>();
-    format!("{}{}", digit, letters)
+    format!("{digit}{letters}")
 }
 
 /// Fetch the stack heads in order and attach a review_id if not already present.
 fn branch_heads(
     vb_state: &VirtualBranchesHandle,
     stack: &mut Stack,
-    stack_context: &StackContext<'_>,
+    repo: &gix::Repository,
     top_branch: String,
 ) -> Result<Vec<BranchHead>> {
     let mut heads = vec![];
 
-    let stack_clone = stack.clone();
     let mut top_head_found = false;
 
     // Heads is listed from parent-most to child-most, but we are wanting to
@@ -111,7 +103,7 @@ fn branch_heads(
             }
         }
 
-        let head_oid = head.head_oid(stack_context, &stack_clone)?.to_gix();
+        let head_oid = head.head_oid(repo)?;
         let review_id = head.review_id.clone().unwrap_or_else(generate_review_id);
         head.review_id = Some(review_id.clone());
 
@@ -133,7 +125,7 @@ fn branch_heads(
 ///
 /// Returns the head of stack.
 fn format_stack_for_review(
-    repository: &gix::Repository,
+    repo: &gix::Repository,
     commits: &[gix::ObjectId],
     heads: &[BranchHead],
     base_commit: gix::ObjectId,
@@ -141,7 +133,7 @@ fn format_stack_for_review(
     let mut previous_commit = base_commit;
 
     for commit_id in commits.iter().rev() {
-        let commit = repository.find_commit(*commit_id)?;
+        let commit = repo.find_commit(*commit_id)?;
         let decoded_commit = commit.decode()?;
         let mut message = CommitMessage::new(decoded_commit.clone());
         let mut object: gix::objs::Commit = decoded_commit.into();
@@ -178,7 +170,7 @@ fn format_stack_for_review(
             gitbutler_repo::SignaturePurpose::Committer,
         )?);
 
-        previous_commit = repository.write_object(object)?.detach();
+        previous_commit = repo.write_object(object)?.detach();
     }
 
     Ok(previous_commit)

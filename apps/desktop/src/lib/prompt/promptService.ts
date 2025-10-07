@@ -1,7 +1,9 @@
-import { listen } from '$lib/backend/ipc';
-import { invoke } from '$lib/backend/ipc';
 import { sleep } from '$lib/utils/sleep';
+import { InjectionToken } from '@gitbutler/core/context';
 import { writable, type Writable } from 'svelte/store';
+import type { IBackend } from '$lib/backend';
+
+export const PROMPT_SERVICE = new InjectionToken<PromptService>('PromptService');
 
 type SystemPrompt = {
 	id: string;
@@ -75,6 +77,8 @@ export class PromptService {
 	private subscriberCount = 0;
 	private unsubscriber: (() => Promise<void>) | null = null;
 
+	constructor(private backend: IBackend) {}
+
 	private async handleEvent(e: SystemPrompt): Promise<string | null> {
 		// TODO(qix-): By default we ignore `auto`. Ideally we do this externally (as in, something
 		// TODO(qix-): subscribes to a specific filter) but for now this is sufficient.
@@ -112,9 +116,9 @@ export class PromptService {
 	}
 
 	private subscribe() {
-		this.unsubscriber ??= listen<SystemPrompt>('git_prompt', async (e) => {
+		this.unsubscriber ??= this.backend.listen<SystemPrompt>('git_prompt', async (e) => {
 			const response = await this.handleEvent(e.payload);
-			return await invoke('submit_prompt_response', { id: e.payload.id, response });
+			return await this.backend.invoke('submit_prompt_response', { id: e.payload.id, response });
 		});
 
 		++this.subscriberCount;

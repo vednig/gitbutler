@@ -6,24 +6,29 @@
 	import ChatInReplyTo, { type ReplyToMessage } from '$lib/components/chat/ChatInReplyTo.svelte';
 	import MentionSuggestions from '$lib/components/chat/MentionSuggestions.svelte';
 	import { type DiffSelection } from '$lib/diff/lineSelection.svelte';
-	import { UserService } from '$lib/user/userService';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
 	import { getChatChannelParticipants } from '@gitbutler/shared/chat/chatChannelsPreview.svelte';
-	import { ChatChannelsService } from '@gitbutler/shared/chat/chatChannelsService';
-	import { getContext } from '@gitbutler/shared/context';
+	import { CHAT_CHANNELS_SERVICE } from '@gitbutler/shared/chat/chatChannelsService';
 	import { uploadFiles } from '@gitbutler/shared/dom';
-	import { PatchCommitService } from '@gitbutler/shared/patches/patchCommitService';
-	import { AppState } from '@gitbutler/shared/redux/store.svelte';
-	import { UploadsService } from '@gitbutler/shared/uploads/uploadsService';
-	import { UserService as NewUserService } from '@gitbutler/shared/users/userService';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import DropDownButton from '@gitbutler/ui/DropDownButton.svelte';
-	import RichTextEditor from '@gitbutler/ui/RichTextEditor.svelte';
+	import { PATCH_COMMIT_SERVICE } from '@gitbutler/shared/patches/patchCommitService';
+	import { APP_STATE } from '@gitbutler/shared/redux/store.svelte';
+	import { UPLOADS_SERVICE } from '@gitbutler/shared/uploads/uploadsService';
+	import { NEW_USER_SERVICE } from '@gitbutler/shared/users/userService';
+
+	import {
+		Button,
+		ContextMenuItem,
+		ContextMenuSection,
+		DropdownButton,
+		EmojiPickerButton,
+		Mention as MentionsPlugin,
+		RichTextEditor
+	} from '@gitbutler/ui';
 	import FileUploadPlugin, {
 		type DropFileResult
 	} from '@gitbutler/ui/richText/plugins/FileUpload.svelte';
-	import MentionsPlugin from '@gitbutler/ui/richText/plugins/Mention.svelte';
+
 	import { isDefined } from '@gitbutler/ui/utils/typeguards';
 	import type { PatchCommit } from '@gitbutler/shared/patches/types';
 	import { env } from '$env/dynamic/public';
@@ -58,14 +63,14 @@
 		clearReply
 	}: Props = $props();
 
-	const newUserService = getContext(NewUserService);
-	const userService = getContext(UserService);
+	const newUserService = inject(NEW_USER_SERVICE);
+	const userService = inject(USER_SERVICE);
 	const user = $derived(userService.user);
 
-	const appState = getContext(AppState);
-	const patchCommitService = getContext(PatchCommitService);
-	const chatChannelService = getContext(ChatChannelsService);
-	const uploadsService = getContext(UploadsService);
+	const appState = inject(APP_STATE);
+	const patchCommitService = inject(PATCH_COMMIT_SERVICE);
+	const chatChannelService = inject(CHAT_CHANNELS_SERVICE);
+	const uploadsService = inject(UPLOADS_SERVICE);
 	const contributors = $derived(patchCommit.contributors.map((c) => c.user).filter(isDefined));
 	const chatParticipants = $derived(
 		getChatChannelParticipants(appState, chatChannelService, projectId, changeId)
@@ -164,7 +169,7 @@
 	type Action = keyof typeof actionLabels;
 
 	let action = $state<Action>('approve');
-	let dropDownButton = $state<ReturnType<typeof DropDownButton>>();
+	let dropDownButton = $state<ReturnType<typeof DropdownButton>>();
 
 	async function approve() {
 		await patchCommitService.updatePatch(branchUuid, changeId, {
@@ -222,6 +227,7 @@
 			.filter(isAcceptedFileType)
 			.map(async (file) => {
 				const upload = await uploadsService.uploadFile(file);
+
 				return { name: file.name, url: upload.url, isImage: upload.isImage };
 			});
 		const settled = await Promise.allSettled(uploads);
@@ -231,9 +237,15 @@
 
 	async function attachFiles() {
 		richText.richTextEditor?.focus();
+
 		const files = await uploadFiles(ACCEPTED_FILE_TYPES.join(','));
+
 		if (!files) return;
 		await fileUploadPlugin?.handleFileUpload(files);
+	}
+
+	function onEmojiSelect(unicode: string) {
+		richText.richTextEditor?.insertText(unicode);
 	}
 
 	export function focusInput() {
@@ -267,7 +279,7 @@
 				markdown={false}
 				namespace="ChatInput"
 				onError={console.error}
-				onChange={(text) => messageHandler.update(text)}
+				onInput={(text) => messageHandler.update(text)}
 				onKeyDown={handleKeyDown}
 			>
 				{#snippet plugins()}
@@ -281,28 +293,26 @@
 				{/snippet}
 			</RichTextEditor>
 			<div class="chat-input__actions">
-				<div class="chat-input__secondary-actions">
-					<Button
-						icon="attachment"
-						tooltip="Attach files"
-						tooltipPosition="top"
-						kind="ghost"
-						onclick={attachFiles}
-					/>
-					<Button
-						icon="smile"
-						kind="ghost"
-						tooltipPosition="top"
-						tooltip="Insert emoji"
-						disabled
-						onclick={() => {
-							// TODO: Implement
-						}}
-					/>
+				<div class="chat-input__inner-toolbar">
+					<EmojiPickerButton onEmojiSelect={(emoji) => onEmojiSelect(emoji.unicode)} />
+					<div class="chat-input__inner-toolbar__divider"></div>
+					<div class="chat-input__inner-toolbar__shrinkable">
+						<Button
+							kind="ghost"
+							icon="attachment-small"
+							reversedDirection
+							onclick={attachFiles}
+							shrinkable
+							width="100%"
+						>
+							<span style="opacity: 0.4">Paste or drop to add files</span>
+						</Button>
+					</div>
 				</div>
+
 				<div class="chat-input__action-buttons">
 					{#if isPatchAuthor === false}
-						<DropDownButton
+						<DropdownButton
 							bind:this={dropDownButton}
 							loading={isSendingMessage || isExecuting}
 							style="neutral"
@@ -335,7 +345,7 @@
 									/>
 								</ContextMenuSection>
 							{/snippet}
-						</DropDownButton>
+						</DropdownButton>
 					{/if}
 					<Button
 						style="pop"
@@ -356,8 +366,8 @@
 
 <style lang="postcss">
 	.chat-input {
-		flex-shrink: 0;
 		display: flex;
+		flex-shrink: 0;
 		flex-direction: column;
 		padding: 16px;
 		border-top: 1px solid var(--clr-border-2);
@@ -368,8 +378,8 @@
 	}
 
 	.chat-input__content-container {
-		flex-grow: 1;
 		display: flex;
+		flex-grow: 1;
 		flex-direction: column;
 		padding: 0;
 		overflow: hidden;
@@ -377,15 +387,36 @@
 	}
 
 	.chat-input__actions {
-		flex-grow: 1;
 		display: flex;
-		padding: 12px;
-		padding-top: 0;
+		position: relative;
+		flex-grow: 1;
 		justify-content: space-between;
+		padding: 12px;
+		gap: 12px;
+
+		&:after {
+			position: absolute;
+			top: 0;
+			left: 12px;
+			width: calc(100% - 24px);
+			height: 1px;
+			background-color: var(--clr-border-3);
+			content: '';
+		}
 	}
 
-	.chat-input__secondary-actions {
+	.chat-input__inner-toolbar {
 		display: flex;
+		align-items: center;
+		justify-content: flex-start;
+		overflow: hidden;
+		gap: 6px;
+	}
+
+	.chat-input__inner-toolbar__divider {
+		width: 1px;
+		height: 18px;
+		background-color: var(--clr-border-3);
 	}
 
 	.chat-input__action-buttons {
@@ -393,12 +424,17 @@
 		gap: 4px;
 	}
 
+	.chat-input__inner-toolbar__shrinkable {
+		display: grid;
+		overflow: hidden;
+	}
+
 	.chat-input-notlooged {
 		display: flex;
-		justify-content: center;
 		align-items: center;
-		gap: 16px;
+		justify-content: center;
 		padding: 16px;
+		gap: 16px;
 		border-top: 1px solid var(--clr-border-2);
 
 		p {

@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use but_settings::AppSettings;
-use gitbutler_branch_actions::conflicts;
 use gitbutler_command_context::CommandContext;
-use gitbutler_project as projects;
 use gitbutler_project::ProjectId;
 use gitbutler_reference::RemoteRefname;
 use gitbutler_repo::RepositoryExt;
@@ -18,35 +16,18 @@ pub struct App {
 
 /// Access to primary categories of data.
 impl App {
-    pub fn projects(&self) -> projects::Controller {
-        projects::Controller::from_path(self.app_data_dir.clone())
-    }
-
     pub fn users(&self) -> gitbutler_user::Controller {
         gitbutler_user::Controller::from_path(&self.app_data_dir)
     }
 }
 
 impl App {
-    pub fn mark_resolved(
-        &self,
-        project_id: ProjectId,
-        path: &str,
-        settings: AppSettings,
-    ) -> Result<()> {
-        let project = self.projects().get(project_id)?;
-        let ctx = CommandContext::open(&project, settings)?;
-        // mark file as resolved
-        conflicts::resolve(&ctx, path)?;
-        Ok(())
-    }
-
     pub fn git_remote_branches(
         &self,
         project_id: ProjectId,
         settings: AppSettings,
     ) -> Result<Vec<RemoteRefname>> {
-        let project = self.projects().get(project_id)?;
+        let project = gitbutler_project::get(project_id)?;
         let ctx = CommandContext::open(&project, settings)?;
         ctx.repo().remote_branches()
     }
@@ -59,7 +40,7 @@ impl App {
         askpass: Option<Option<StackId>>,
         settings: AppSettings,
     ) -> Result<()> {
-        let project = self.projects().get(project_id)?;
+        let project = gitbutler_project::get(project_id)?;
         let ctx = CommandContext::open(&project, settings)?;
         ctx.git_test_push(remote_name, branch_name, askpass)
     }
@@ -71,13 +52,13 @@ impl App {
         askpass: Option<String>,
         settings: AppSettings,
     ) -> Result<()> {
-        let project = self.projects().get(project_id)?;
+        let project = gitbutler_project::get(project_id)?;
         let ctx = CommandContext::open(&project, settings)?;
         ctx.fetch(remote_name, askpass)
     }
 
     pub fn git_index_size(&self, project_id: ProjectId, settings: AppSettings) -> Result<usize> {
-        let project = self.projects().get(project_id)?;
+        let project = gitbutler_project::get(project_id)?;
         let ctx = CommandContext::open(&project, settings)?;
         let size = ctx
             .repo()
@@ -85,13 +66,6 @@ impl App {
             .context("failed to get index size")?
             .len();
         Ok(size)
-    }
-
-    pub fn git_head(&self, project_id: ProjectId, settings: AppSettings) -> Result<String> {
-        let project = self.projects().get(project_id)?;
-        let ctx = CommandContext::open(&project, settings)?;
-        let head = ctx.repo().head().context("failed to get repository head")?;
-        Ok(head.name().unwrap().to_string())
     }
 
     pub fn git_set_global_config(key: &str, value: &str) -> Result<String> {
@@ -121,10 +95,8 @@ impl App {
     }
 
     pub fn delete_all_data(&self) -> Result<()> {
-        let controller = self.projects();
-        for project in controller.list().context("failed to list projects")? {
-            controller
-                .delete(project.id)
+        for project in gitbutler_project::list().context("failed to list projects")? {
+            gitbutler_project::delete(project.id)
                 .map_err(|err| err.context("failed to delete project"))?;
         }
         Ok(())

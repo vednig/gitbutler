@@ -1,56 +1,29 @@
 <script lang="ts">
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import ScrollableContainer from '@gitbutler/ui/scroll/ScrollableContainer.svelte';
-	import { type ScrollbarPaddingType } from '@gitbutler/ui/scroll/Scrollbar.svelte';
-	import { type Snippet } from 'svelte';
+	import { SETTINGS } from '$lib/settings/userSettings';
+	import { inject } from '@gitbutler/core/context';
+	import { ScrollableContainer, type ScrollableProps } from '@gitbutler/ui';
 
-	interface Props {
-		height?: string;
-		maxHeight?: string;
-		initiallyVisible?: boolean;
-		wide?: boolean;
-		padding?: ScrollbarPaddingType;
-		shift?: string;
-		thickness?: string;
-		horz?: boolean;
-		onthumbdrag?: (dragging: boolean) => void;
-		children: Snippet;
-		onscrollEnd?: (visible: boolean) => void;
-		onscroll?: (e: Event) => void;
+	let {
+		viewport = $bindable(),
+		viewportHeight = $bindable(),
+		...restProps
+	}: ScrollableProps = $props();
+
+	const userSettings = inject(SETTINGS);
+	let scrollableContainer: ScrollableContainer;
+
+	// Export method to scroll to bottom
+	export function scrollToBottom() {
+		if (scrollableContainer?.scrollToBottom) {
+			scrollableContainer.scrollToBottom();
+		}
 	}
-
-	const {
-		height,
-		maxHeight,
-		initiallyVisible,
-		wide,
-		padding,
-		shift,
-		thickness,
-		horz,
-		children,
-		onthumbdrag,
-		onscroll,
-		onscrollEnd
-	}: Props = $props();
-
-	const userSettings = getContextStoreBySymbol<Settings>(SETTINGS);
 </script>
 
 <ScrollableContainer
-	{height}
-	{maxHeight}
-	{initiallyVisible}
-	{wide}
-	{padding}
-	{shift}
-	{thickness}
-	{horz}
-	{onthumbdrag}
-	{onscrollEnd}
-	{onscroll}
+	bind:this={scrollableContainer}
+	bind:viewport
+	bind:viewportHeight
 	whenToShow={$userSettings.scrollbarVisibilityState}
->
-	{@render children()}
-</ScrollableContainer>
+	{...restProps}
+/>

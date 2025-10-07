@@ -1,17 +1,28 @@
-import { invoke, listen } from '$lib/backend/ipc';
-import { RemoteFile } from '$lib/files/file';
-import { plainToInstance } from 'class-transformer';
-import { derived, writable } from 'svelte/store';
+import { hasBackendExtra } from '$lib/state/backendQuery';
+import { invalidatesList, providesList, ReduxTag } from '$lib/state/tags';
+import { InjectionToken } from '@gitbutler/core/context';
 import type { ConflictEntryPresence } from '$lib/conflictEntryPresence';
+import type { TreeChange } from '$lib/hunks/change';
+import type { ClientState } from '$lib/state/clientState.svelte';
 
 export interface EditModeMetadata {
 	commitOid: string;
 	branchReference: string;
 }
 
+export interface OutsideWorkspaceMetadata {
+	/** The name of the currently checked out branch or null if in detached head state. */
+	branchName: string | null;
+	/** The paths of any files that would conflict with the workspace as it currently is */
+	worktreeConflicts: string[];
+}
+
 type Mode =
 	| { type: 'OpenWorkspace' }
-	| { type: 'OutsideWorkspace' }
+	| {
+			type: 'OutsideWorkspace';
+			subject: OutsideWorkspaceMetadata;
+	  }
 	| {
 			type: 'Edit';
 			subject: EditModeMetadata;
@@ -21,74 +32,129 @@ interface HeadAndMode {
 	operatingMode?: Mode;
 }
 
+export const MODE_SERVICE = new InjectionToken<ModeService>('ModeService');
+
 export class ModeService {
-	private headAndMode = writable<HeadAndMode>({}, (set) => {
-		this.refresh();
+	private api: ReturnType<typeof injectEndpoints>;
 
-		const unsubscribe = subscribeToHead(this.projectId, (headAndMode) => {
-			set(headAndMode);
-		});
-
-		return unsubscribe;
-	});
-
-	readonly head = derived(this.headAndMode, ({ head }) => head);
-	readonly mode = derived(this.headAndMode, ({ operatingMode }) => operatingMode);
-
-	constructor(private projectId: string) {}
-
-	private async refresh() {
-		const head = await invoke<string>('git_head', { projectId: this.projectId });
-		const operatingMode = await invoke<Mode>('operating_mode', { projectId: this.projectId });
-
-		this.headAndMode.set({ head, operatingMode });
+	constructor(state: ClientState['backendApi']) {
+		this.api = injectEndpoints(state);
 	}
 
-	async enterEditMode(commitOid: string, stackId: string) {
-		await invoke('enter_edit_mode', {
-			projectId: this.projectId,
-			commitOid,
-			stackId
-		});
+	get enterEditMode() {
+		return this.api.endpoints.enterEditMode.mutate;
 	}
 
-	async abortEditAndReturnToWorkspace() {
-		await invoke('abort_edit_and_return_to_workspace', {
-			projectId: this.projectId
-		});
+	get abortEditAndReturnToWorkspace() {
+		return this.api.endpoints.abortEditAndReturnToWorkspace.mutate;
 	}
 
-	async saveEditAndReturnToWorkspace() {
-		await invoke('save_edit_and_return_to_workspace', {
-			projectId: this.projectId
-		});
+	get abortEditAndReturnToWorkspaceMutation() {
+		return this.api.endpoints.abortEditAndReturnToWorkspace.useMutation();
 	}
 
-	async getInitialIndexState() {
-		const rawOutput = await invoke<unknown[][]>('edit_initial_index_state', {
-			projectId: this.projectId
-		});
-
-		return rawOutput.map((entry) => {
-			return [plainToInstance(RemoteFile, entry[0]), entry[1] as ConflictEntryPresence | undefined];
-		}) as [RemoteFile, ConflictEntryPresence | undefined][];
+	get saveEditAndReturnToWorkspace() {
+		return this.api.endpoints.saveEditAndReturnToWorkspace.mutate;
 	}
 
-	async awaitNotEditing(): Promise<void> {
-		return await new Promise((resolve) => {
-			const unsubscribe = this.mode.subscribe((operatingMode) => {
-				if (operatingMode && operatingMode?.type !== 'Edit') {
-					resolve();
+	get saveEditAndReturnToWorkspaceMutation() {
+		return this.api.endpoints.saveEditAndReturnToWorkspace.useMutation();
+	}
 
-					setTimeout(() => {
-						unsubscribe();
-					}, 0);
-				}
-			});
-		});
+	get initialEditModeState() {
+		return this.api.endpoints.initialEditModeState.useQuery;
+	}
+
+	get changesSinceInitialEditState() {
+		return this.api.endpoints.changesSinceInitialEditState.useQuery;
+	}
+
+	get mode() {
+		return this.api.endpoints.mode.useQuery;
 	}
 }
 
-function subscribeToHead(projectId: string, callback: (headAndMode: HeadAndMode) => void) {
-	return listen<HeadAndMode>(`project://${projectId}/git/head`, (event) => callback(event.payload));
+function injectEndpoints(api: ClientState['backendApi']) {
+	return api.injectEndpoints({
+		endpoints: (build) => ({
+			enterEditMode: build.mutation<void, { projectId: string; commitId: string; stackId: string }>(
+				{
+					extraOptions: { command: 'enter_edit_mode' },
+					query: (args) => args,
+					invalidatesTags: [
+						invalidatesList(ReduxTag.InitalEditListing),
+						invalidatesList(ReduxTag.EditChangesSinceInitial),
+						invalidatesList(ReduxTag.HeadMetadata)
+					]
+				}
+			),
+			abortEditAndReturnToWorkspace: build.mutation<void, { projectId: string }>({
+				extraOptions: { command: 'abort_edit_and_return_to_workspace' },
+				query: (args) => args,
+				invalidatesTags: [invalidatesList(ReduxTag.HeadMetadata)]
+			}),
+			saveEditAndReturnToWorkspace: build.mutation<void, { projectId: string }>({
+				extraOptions: { command: 'save_edit_and_return_to_workspace' },
+				query: (args) => args,
+				invalidatesTags: [
+					invalidatesList(ReduxTag.WorktreeChanges),
+					invalidatesList(ReduxTag.StackDetails),
+					invalidatesList(ReduxTag.HeadMetadata)
+				]
+			}),
+			initialEditModeState: build.query<
+				[TreeChange, ConflictEntryPresence | undefined][],
+				{ projectId: string }
+			>({
+				extraOptions: { command: 'edit_initial_index_state' },
+				query: (args) => args,
+				providesTags: [providesList(ReduxTag.InitalEditListing)]
+			}),
+			changesSinceInitialEditState: build.query<TreeChange[], { projectId: string }>({
+				extraOptions: { command: 'edit_changes_from_initial' },
+				query: (args) => args,
+				providesTags: [providesList(ReduxTag.EditChangesSinceInitial)],
+				async onCacheEntryAdded(arg, lifecycleApi) {
+					if (!hasBackendExtra(lifecycleApi.extra)) {
+						throw new Error('Redux dependency Backend not found!');
+					}
+					const { invoke, listen } = lifecycleApi.extra.backend;
+					await lifecycleApi.cacheDataLoaded;
+					let finished = false;
+					// We are listening to this only for the notification that changes have been made
+					const unsubscribe = listen<unknown>(
+						`project://${arg.projectId}/worktree_changes`,
+						async (_) => {
+							if (finished) return;
+							const changes = await invoke<TreeChange[]>('edit_changes_from_initial', arg);
+							lifecycleApi.updateCachedData(() => changes);
+						}
+					);
+					// The `cacheEntryRemoved` promise resolves when the result is removed
+					await lifecycleApi.cacheEntryRemoved;
+					finished = true;
+					unsubscribe();
+				}
+			}),
+			mode: build.query<Mode, { projectId: string }>({
+				extraOptions: { command: 'operating_mode' },
+				query: (args) => args,
+				providesTags: [providesList(ReduxTag.HeadMetadata)],
+				async onCacheEntryAdded(arg, lifecycleApi) {
+					if (!hasBackendExtra(lifecycleApi.extra)) {
+						throw new Error('Redux dependency Backend not found!');
+					}
+					await lifecycleApi.cacheDataLoaded;
+					const unsubscribe = lifecycleApi.extra.backend.listen<HeadAndMode>(
+						`project://${arg.projectId}/git/head`,
+						(event) => {
+							lifecycleApi.updateCachedData(() => event.payload.operatingMode);
+						}
+					);
+					await lifecycleApi.cacheEntryRemoved;
+					unsubscribe();
+				}
+			})
+		})
+	});
 }

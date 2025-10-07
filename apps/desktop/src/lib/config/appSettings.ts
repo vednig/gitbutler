@@ -5,15 +5,19 @@
  * TODO: Rewrite this to be an injectable object so we don't need `storeInstance`.
  */
 
-import { Store } from '@tauri-apps/plugin-store';
-import { writable, type Writable } from 'svelte/store';
+import { InjectionToken } from '@gitbutler/core/context';
+import { persisted } from '@gitbutler/shared/persisted';
+import { get, writable, type Writable } from 'svelte/store';
+import type { DiskStore, IBackend } from '$lib/backend';
 
 type DiskWritable<T> = Writable<T> & { onDisk: () => Promise<T> };
 
-export async function loadAppSettings() {
-	const diskStore = await Store.load('settings.json', { autoSave: true });
+export async function loadAppSettings(backend: IBackend) {
+	const diskStore = await backend.loadDiskStore('settings.json');
 	return new AppSettings(diskStore);
 }
+
+export const APP_SETTINGS = new InjectionToken<AppSettings>('AppSettings');
 
 export class AppSettings {
 	/**
@@ -42,7 +46,7 @@ export class AppSettings {
 	 */
 	readonly appNonAnonMetricsEnabled: DiskWritable<boolean>;
 
-	constructor(private diskStore: Store) {
+	constructor(private diskStore: DiskStore) {
 		this.appAnalyticsConfirmed = this.persisted(false, 'appAnalyticsConfirmed');
 		this.appMetricsEnabled = this.persisted(true, 'appMetricsEnabled');
 		this.appErrorReportingEnabled = this.persisted(true, 'appErrorReportingEnabled');
@@ -50,6 +54,14 @@ export class AppSettings {
 	}
 
 	private persisted<T>(initial: T, key: string): Writable<T> & { onDisk: () => Promise<T> } {
+		if (!this.diskStore) {
+			const writable = persisted(initial, key);
+			return {
+				...writable,
+				onDisk: async () => await Promise.resolve(get(writable))
+			};
+		}
+
 		const diskStore = this.diskStore;
 		const storeValueWithDefault = this.storeValueWithDefault.bind(this);
 
@@ -60,7 +72,7 @@ export class AppSettings {
 		const subscribe = keySpecificStore.subscribe;
 
 		async function setAndPersist(value: T, set: (value: T) => void) {
-			diskStore?.set(key, value);
+			diskStore.set(key, value);
 			set(value);
 		}
 
@@ -85,7 +97,7 @@ export class AppSettings {
 	}
 
 	async storeValueWithDefault<T>(initial: T, key: string): Promise<T> {
-		const stored = (await this.diskStore?.get(key)) as T;
+		const stored = await this.diskStore.get<T>(key);
 		return stored === null || stored === undefined ? initial : stored;
 	}
 }

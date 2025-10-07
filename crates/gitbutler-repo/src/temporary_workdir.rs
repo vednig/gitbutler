@@ -11,7 +11,7 @@ use uuid::Uuid;
 pub struct TemporaryWorkdir {
     directory: PathBuf,
     worktree: git2::Worktree,
-    repository: git2::Repository,
+    repo: git2::Repository,
     branch_name: Uuid,
     cleaned_up: bool,
 }
@@ -20,7 +20,7 @@ impl TemporaryWorkdir {
     pub fn open(repository: &git2::Repository) -> Result<Self> {
         let directory = tempdir().context("Failed to create temporary directory")?;
         // By using into path, we need to deconstruct the TempDir ourselves
-        let path = directory.into_path();
+        let path = directory.keep();
         let branch_name = Uuid::new_v4();
         let worktree = repository
             .worktree(&branch_name.to_string(), &path.join("repository"), None)
@@ -29,7 +29,7 @@ impl TemporaryWorkdir {
             .context("Failed to open worktree repository")?;
 
         Ok(TemporaryWorkdir {
-            repository: worktree_repository,
+            repo: worktree_repository,
             directory: path,
             worktree,
             branch_name,
@@ -42,7 +42,7 @@ impl TemporaryWorkdir {
             panic!("Can not access repository after its been closed")
         }
 
-        &self.repository
+        &self.repo
     }
 
     pub fn close(&mut self) -> Result<()> {
@@ -52,7 +52,7 @@ impl TemporaryWorkdir {
 
         std::fs::remove_dir_all(&self.directory)?;
         self.worktree.prune(None)?;
-        self.repository
+        self.repo
             .find_branch(&self.branch_name.to_string(), git2::BranchType::Local)?
             .delete()?;
 

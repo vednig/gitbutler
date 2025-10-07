@@ -1,48 +1,55 @@
 <script lang="ts">
-	import { showHistoryView } from '$lib/config/config';
-	import { Project } from '$lib/project/project';
-	import { projectSettingsPath } from '$lib/routes/routes.svelte';
-	import { SETTINGS, type Settings } from '$lib/settings/userSettings';
-	import { ShortcutService } from '$lib/shortcuts/shortcutService.svelte';
-	import * as events from '$lib/utils/events';
-	import { unsubscribe } from '$lib/utils/unsubscribe';
-	import { getEditorUri, openExternalUrl } from '$lib/utils/url';
-	import { getContextStoreBySymbol } from '@gitbutler/shared/context';
-	import { getContext } from '@gitbutler/shared/context';
-	import { onMount } from 'svelte';
-	import type { Writable } from 'svelte/store';
 	import { goto } from '$app/navigation';
+	import { FILE_SERVICE } from '$lib/files/fileService';
+	import { vscodePath } from '$lib/project/project';
+	import { PROJECTS_SERVICE } from '$lib/project/projectsService';
+	import { historyPath } from '$lib/routes/routes.svelte';
+	import { useSettingsModal } from '$lib/settings/settingsModal.svelte';
+	import { SETTINGS } from '$lib/settings/userSettings';
+	import { SHORTCUT_SERVICE } from '$lib/shortcuts/shortcutService';
+	import { getEditorUri, URL_SERVICE } from '$lib/utils/url';
+	import { inject } from '@gitbutler/core/context';
+	import { mergeUnlisten } from '@gitbutler/ui/utils/mergeUnlisten';
 
-	const project = getContext(Project);
-	const userSettings = getContextStoreBySymbol<Settings, Writable<Settings>>(SETTINGS);
-	const shortcutService = getContext(ShortcutService);
+	const { projectId }: { projectId: string } = $props();
 
-	shortcutService.on('project-settings', () => {
-		goto(projectSettingsPath(project.id));
-	});
+	const projectsService = inject(PROJECTS_SERVICE);
+	const urlService = inject(URL_SERVICE);
+	const { openProjectSettings } = useSettingsModal();
 
-	shortcutService.on('open-in-vscode', () => {
-		const path = getEditorUri({
-			schemeId: $userSettings.defaultCodeEditor.schemeIdentifer,
-			path: [project.vscodePath],
-			searchParams: { windowId: '_blank' }
-		});
-		openExternalUrl(path);
-	});
+	const userSettings = inject(SETTINGS);
+	const shortcutService = inject(SHORTCUT_SERVICE);
+	const fileService = inject(FILE_SERVICE);
 
-	shortcutService.on('history', () => {
-		$showHistoryView = !$showHistoryView;
-	});
-
-	const unsubscribeHistoryButton = unsubscribe(
-		events.on('openHistory', () => {
-			$showHistoryView = true;
-		})
+	$effect(() =>
+		mergeUnlisten(
+			shortcutService.on('project-settings', () => {
+				openProjectSettings(projectId);
+			}),
+			shortcutService.on('history', () => {
+				goto(historyPath(projectId));
+			}),
+			shortcutService.on('open-in-vscode', async () => {
+				const project = await projectsService.fetchProject(projectId);
+				if (!project) {
+					throw new Error(`Project not found: ${projectId}`);
+				}
+				urlService.openExternalUrl(
+					getEditorUri({
+						schemeId: $userSettings.defaultCodeEditor.schemeIdentifer,
+						path: [vscodePath(project.path)],
+						searchParams: { windowId: '_blank' }
+					})
+				);
+			}),
+			shortcutService.on('show-in-finder', async () => {
+				const project = await projectsService.fetchProject(projectId);
+				if (!project) {
+					throw new Error(`Project not found: ${projectId}`);
+				}
+				// Show the project directory in the default file manager (cross-platform)
+				await fileService.showFileInFolder(project.path);
+			})
+		)
 	);
-
-	onMount(() => {
-		return () => {
-			unsubscribeHistoryButton();
-		};
-	});
 </script>

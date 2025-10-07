@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2024"
 authors = ["GitButler <gitbutler@gitbutler.com>"]
 publish = false
-
+rust-version = "1.89"
 [lib]
 doctest = false
 
@@ -16,11 +16,19 @@ testing = []
 serde = { workspace = true, features = ["std"] }
 bstr.workspace = true
 tracing.workspace = true
-anyhow = "1.0.95"
-gix = { workspace = true, features = ["dirwalk", "credentials", "parallel", "serde", "status"] }
+anyhow = "1.0.100"
+gix = { workspace = true, features = [
+    "dirwalk",
+    "credentials",
+    "parallel",
+    "serde",
+    "status",
+] }
 gitbutler-serde.workspace = true
 gitbutler-error.workspace = true
 uuid.workspace = true
+toml.workspace = true
+chardetng = "0.1.17"
 
 [dev-dependencies]
 but-testsupport.workspace = true

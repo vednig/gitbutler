@@ -1,13 +1,11 @@
 <script lang="ts">
-	import { getContext } from '$lib/context';
-	import { OrganizationService } from '$lib/organizations/organizationService';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
-	import Textarea from '@gitbutler/ui/Textarea.svelte';
-	import Textbox from '@gitbutler/ui/Textbox.svelte';
+	import { ORGANIZATION_SERVICE } from '$lib/organizations/organizationService';
+	import { inject } from '@gitbutler/core/context';
+
+	import { Button, Modal, Textarea, Textbox } from '@gitbutler/ui';
 	import { slugify } from '@gitbutler/ui/utils/string';
 
-	const organizationService = getContext(OrganizationService);
+	const organizationService = inject(ORGANIZATION_SERVICE);
 
 	let name = $state<string>('');
 	let slug = $state<string>('');
@@ -71,9 +69,9 @@
 
 <style>
 	h2 {
-		font-size: 20px;
-		font-weight: 600;
 		margin-bottom: 10px;
+		font-weight: 600;
+		font-size: 20px;
 	}
 
 	.form-container {

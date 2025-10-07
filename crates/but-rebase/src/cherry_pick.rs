@@ -24,7 +24,7 @@ pub enum EmptyCommit {
 
 pub(crate) mod function {
     use crate::cherry_pick::{EmptyCommit, PickMode};
-    use crate::commit::CommitterMode;
+    use crate::commit::DateMode;
     use anyhow::{Context, bail};
     use bstr::BString;
     use but_core::commit::{HEADERS_CONFLICTED_FIELD, HeadersV2, TreeKind};
@@ -118,27 +118,37 @@ pub(crate) mod function {
         to_rebase: &but_core::Commit<'repo>,
     ) -> anyhow::Result<(gix::Id<'repo>, gix::Id<'repo>, gix::Id<'repo>)> {
         let repo = to_rebase.id.repo;
-        let (base, theirs) = if to_rebase.is_conflicted() {
-            let base = to_rebase
-                .tree_id_by_kind(TreeKind::Base)?
-                .expect("A conflicted tree always has a base (of the original commit to rebase)");
-            // TODO: as long as only cherry-picking is creating these trees, THEIRS
-            //       is the original 'to_rebase'. However, if that changes we must know
-            //       what created the special merge commit.
-            let theirs = to_rebase.tree_id_by_kind(TreeKind::Theirs)?.expect(
-                "A conflicted tree always has 'their' side (which is our side in a cherry-pick)",
-            );
-            (base, theirs)
+        // we need to do a manual 3-way patch merge
+        // find the base, which is the parent of to_rebase
+        let base = if to_rebase.is_conflicted() {
+            // Use to_rebase's recorded base
+            find_real_tree(to_rebase, TreeKind::Base)?
         } else {
-            let base = match to_rebase.parents.first() {
-                Some(base_commit) => but_core::Commit::from_id(base_commit.attach(repo))?
-                    .tree_id_by_kind_or_ours(TreeKind::Ours)?,
-                None => gix::ObjectId::empty_tree(repo.object_hash()).attach(repo),
-            };
-            (base, to_rebase.tree_id()?)
+            let base_commit_id = to_rebase.parents.first().context("no parent")?;
+            // Use the parent's auto-resolution
+            let base_commit = but_core::Commit::from_id(base_commit_id.attach(repo))?;
+            find_real_tree(&base_commit, TreeKind::AutoResolution)?
         };
-        let ours = new_base.tree_id_by_kind_or_ours(TreeKind::Ours)?;
+        // Get the auto-resolution
+        let ours = find_real_tree(new_base, TreeKind::AutoResolution)?;
+        // Get the original theirs
+        let theirs = find_real_tree(to_rebase, TreeKind::Theirs)?;
         Ok((base, ours, theirs))
+    }
+
+    fn find_real_tree<'repo>(
+        commit: &but_core::Commit<'repo>,
+        side: TreeKind,
+    ) -> anyhow::Result<gix::Id<'repo>> {
+        Ok(if commit.is_conflicted() {
+            let tree = commit.id.repo.find_tree(commit.tree)?;
+            let conflicted_side = tree
+                .find_entry(side.as_tree_entry_name())
+                .context("Failed to get conflicted side of commit")?;
+            conflicted_side.id()
+        } else {
+            commit.tree_id_or_auto_resolution()?
+        })
     }
 
     fn commit_from_unconflicted_tree<'repo>(
@@ -150,7 +160,7 @@ pub(crate) mod function {
         let repo = head.id.repo;
         // Remove empty commits
         if matches!(empty_commit, EmptyCommit::UsePrevious)
-            && resolved_tree_id == head.tree_id_by_kind_or_ours(TreeKind::Ours)?
+            && resolved_tree_id == head.tree_id_or_auto_resolution()?
         {
             return Ok(head.id);
         }
@@ -174,7 +184,10 @@ pub(crate) mod function {
                 .extend(Vec::<(BString, BString)>::from(&HeadersV2::default()));
         }
         set_parent(&mut new_commit, head.id.detach())?;
-        Ok(crate::commit::create(repo, new_commit, CommitterMode::Update)?.attach(repo))
+        Ok(
+            crate::commit::create(repo, new_commit, DateMode::CommitterUpdateAuthorKeep)?
+                .attach(repo),
+        )
     }
 
     fn commit_from_conflicted_tree<'repo>(
@@ -231,7 +244,10 @@ pub(crate) mod function {
         set_parent(&mut to_rebase, head.id.detach())?;
 
         to_rebase.set_headers(&headers);
-        Ok(crate::commit::create(repo, to_rebase.inner, CommitterMode::Update)?.attach(repo))
+        Ok(
+            crate::commit::create(repo, to_rebase.inner, DateMode::CommitterUpdateAuthorKeep)?
+                .attach(repo),
+        )
     }
 
     fn extract_conflicted_files(

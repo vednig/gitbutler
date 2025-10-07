@@ -5,7 +5,7 @@ import { defineConfig, type Plugin } from 'vitest/config';
 
 export default defineConfig({
 	plugins: [
-		debounceReload(),
+		process.env.VITE_DEBOUNCE_RELOAD ? debounceReload() : undefined,
 		sentrySvelteKit({
 			adapter: 'other',
 			autoInstrument: {
@@ -46,6 +46,10 @@ export default defineConfig({
 			strict: false
 		}
 	},
+	optimizeDeps: {
+		// Exclude local packages from pre-bundling
+		exclude: ['@gitbutler/core', '@gitbutler/ui', '@gitbutler/shared']
+	},
 	// to make use of `TAURI_ENV_DEBUG` and other env variables
 	// https://tauri.studio/v1/api/config#buildconfig.beforedevcommand
 	envPrefix: ['VITE_', 'TAURI_'],
@@ -56,13 +60,17 @@ export default defineConfig({
 		// minify production builds
 		minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
 		// ship sourcemaps for better sentry error reports
-		sourcemap: true
+		sourcemap: 'inline'
 	},
 	test: {
 		includeSource: ['src/**/*.test.{js,ts}'],
 		exclude: ['node_modules/**/*', 'e2e/**/*'],
 		environment: 'jsdom',
 		setupFiles: ['./vitest-setup.js']
+	},
+	preview: {
+		// preview port for the e2e tests
+		port: 1420
 	}
 });
 
@@ -142,5 +150,5 @@ function isNotInDesktopApp(file: string) {
 }
 
 function getReloadDelay(longDelay: boolean): number | undefined {
-	return longDelay ? 500 : 250;
+	return longDelay ? 5000 : 250;
 }

@@ -1,102 +1,71 @@
 <script lang="ts">
-	import ChecksPolling from '$components/ChecksPolling.svelte';
-	import MergeButton from '$components/MergeButton.svelte';
+	import PrStatusBadge from '$components/PrStatusBadge.svelte';
 	import PullRequestPolling from '$components/PullRequestPolling.svelte';
-	import { BaseBranchService } from '$lib/baseBranch/baseBranchService';
-	import { VirtualBranchService } from '$lib/branches/virtualBranchService';
-	import { DefaultForgeFactory } from '$lib/forge/forgeFactory.svelte';
-	import { showError } from '$lib/notifications/toasts';
-	import { Project } from '$lib/project/project';
-	import { openExternalUrl } from '$lib/utils/url';
-	import { copyToClipboard } from '@gitbutler/shared/clipboard';
-	import { inject } from '@gitbutler/shared/context';
-	import AsyncButton from '@gitbutler/ui/AsyncButton.svelte';
-	import Badge from '@gitbutler/ui/Badge.svelte';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import ContextMenu from '@gitbutler/ui/ContextMenu.svelte';
-	import ContextMenuItem from '@gitbutler/ui/ContextMenuItem.svelte';
-	import ContextMenuSection from '@gitbutler/ui/ContextMenuSection.svelte';
-	import type { MessageStyle } from '$components/InfoMessage.svelte';
-	import type { PatchSeries } from '$lib/branches/branch';
+	import ReduxResult from '$components/ReduxResult.svelte';
+	import { CLIPBOARD_SERVICE } from '$lib/backend/clipboard';
+	import { DEFAULT_FORGE_FACTORY } from '$lib/forge/forgeFactory.svelte';
+	import { URL_SERVICE } from '$lib/utils/url';
+	import { inject } from '@gitbutler/core/context';
+	import {
+		Button,
+		ContextMenu,
+		ContextMenuItem,
+		ContextMenuSection,
+		Icon,
+		AvatarGroup,
+		TestId
+	} from '@gitbutler/ui';
+	import { getForgeLogo } from '@gitbutler/ui/utils/getForgeLogo';
 	import type { DetailedPullRequest } from '$lib/forge/interface/types';
-	import type iconsJson from '@gitbutler/ui/data/icons.json';
-	import type { ComponentColorType } from '@gitbutler/ui/utils/colorTypes';
+	import type { Snippet } from 'svelte';
 
-	interface Props {
-		pr: DetailedPullRequest;
-		poll: boolean;
-		isPushed: boolean;
-		hasParent: boolean;
-		parentIsPushed: boolean;
-		child?: PatchSeries;
-		openPrDetailsModal: () => void;
-	}
-
-	type StatusInfo = {
-		text: string;
-		icon: keyof typeof iconsJson | undefined;
-		style?: ComponentColorType;
-		messageStyle?: MessageStyle;
+	type ButtonStatus = {
+		disabled: boolean;
 		tooltip?: string;
 	};
 
-	const { pr, poll, child, hasParent, isPushed, openPrDetailsModal, parentIsPushed }: Props =
-		$props();
+	interface Props {
+		testId?: string;
+		branchName: string;
+		poll?: boolean;
+		prNumber: number;
+		isPushed?: boolean;
+		hasParent?: boolean;
+		baseIsTargetBranch?: boolean;
+		parentIsPushed?: boolean;
+		button?: Snippet<
+			[{ pr: DetailedPullRequest; mergeStatus: ButtonStatus; reopenStatus: ButtonStatus }]
+		>;
+	}
+
+	const {
+		testId,
+		poll,
+		prNumber,
+		isPushed,
+		hasParent,
+		baseIsTargetBranch,
+		parentIsPushed,
+		button
+	}: Props = $props();
 
 	let contextMenuEl = $state<ReturnType<typeof ContextMenu>>();
-	let contextMenuTarget = $state<HTMLElement>();
-
-	const [project, vbranchService, baseBranchService, forge] = inject(
-		Project,
-		VirtualBranchService,
-		BaseBranchService,
-		DefaultForgeFactory
-	);
-
-	// TODO: Make these props so we don't need `!`.
-	const repoService = $derived(forge.current.repoService!);
-	const prService = $derived(forge.current.prService!);
-
-	const baseBranch = $derived(baseBranchService.base);
-	const repoResult = $derived(repoService.getInfo());
-	const repoInfo = $derived(repoResult?.current.data);
-
-	let shouldUpdateTargetBaseBranch = $state(false);
-	$effect(() => {
-		shouldUpdateTargetBaseBranch = repoInfo?.deleteBranchAfterMerge === false && !!child?.prNumber;
-	});
-
-	const baseBranchRepo = $derived(baseBranchService.repo);
-	const baseIsTargetBranch = $derived(
-		pr
-			? $baseBranch?.shortName === pr.baseBranch && $baseBranchRepo?.hash === pr.baseRepo?.hash
-			: false
-	);
-
-	let isMerging = $state(false);
+	let container = $state<HTMLElement>();
 	let hasChecks = $state(false);
 
+	const forge = inject(DEFAULT_FORGE_FACTORY);
+	const forgeName = $derived(forge.current.name);
+	const prService = $derived(forge.current.prService);
+	const checksService = $derived(forge.current.checks);
+	const urlService = inject(URL_SERVICE);
+	const clipboardService = inject(CLIPBOARD_SERVICE);
+
+	const prQuery = $derived(prService?.get(prNumber, { forceRefetch: true }));
+	const pr = $derived(prQuery?.response);
+
+	const { name, abbr, symbol } = $derived(prService!.unit);
+
 	const prLoading = $state(false);
-
-	const prStatusInfo: StatusInfo = $derived.by(() => {
-		if (!pr) {
-			return { text: 'Status', icon: 'spinner', style: 'neutral' };
-		}
-
-		if (pr?.mergedAt) {
-			return { text: 'Merged', icon: 'merged-pr-small', style: 'purple' };
-		}
-
-		if (pr?.closedAt) {
-			return { text: 'Closed', icon: 'closed-pr-small', style: 'error' };
-		}
-
-		if (pr?.draft) {
-			return { text: 'Draft', icon: 'draft-pr-small', style: 'neutral' };
-		}
-
-		return { text: 'Open', icon: 'pr-small', style: 'success' };
-	});
 
 	const mergeStatus = $derived.by(() => {
 		let disabled = true;
@@ -104,21 +73,23 @@
 		if (isPushed && hasParent && !parentIsPushed) {
 			tooltip = 'Remote parent branch seems to have been deleted';
 		} else if (!baseIsTargetBranch) {
-			tooltip = 'Pull request is not next in stack';
+			tooltip = name + ' is not next in stack';
 		} else if (prLoading) {
 			tooltip = 'Reloading pull request data';
+		} else if (!pr?.permissions?.canMerge) {
+			tooltip = name + ' requires push permissions';
 		} else if (pr?.draft) {
-			tooltip = 'Pull request is a draft';
+			tooltip = name + ' is a draft';
 		} else if (pr?.mergeableState === 'blocked') {
-			tooltip = 'Pull request needs approval';
+			tooltip = name + ' needs approval';
 		} else if (pr?.mergeableState === 'unknown') {
-			tooltip = 'Pull request mergeability is unknown';
+			tooltip = name + ' mergeability is unknown';
 		} else if (pr?.mergeableState === 'behind') {
-			tooltip = 'Pull request base is too far behind';
+			tooltip = name + ' base is too far behind';
 		} else if (pr?.mergeableState === 'dirty') {
-			tooltip = 'Pull request has conflicts';
+			tooltip = name + ' has conflicts';
 		} else if (!pr?.mergeable) {
-			tooltip = 'Pull request is not mergeable';
+			tooltip = name + ' is not mergeable';
 		} else {
 			disabled = false;
 		}
@@ -135,197 +106,167 @@
 		}
 		return { disabled, tooltip };
 	});
-
-	async function handleReopenPr() {
-		await prService?.reopen(pr.number);
-	}
 </script>
 
-{#if poll}
-	<PullRequestPolling number={pr.number} />
-{/if}
-
-<ContextMenu bind:this={contextMenuEl} rightClickTrigger={contextMenuTarget}>
-	<ContextMenuSection>
-		<ContextMenuItem
-			label="Open in browser"
-			onclick={() => {
-				openExternalUrl(pr.htmlUrl);
-				contextMenuEl?.close();
-			}}
-		/>
-		<ContextMenuItem
-			label="Copy link"
-			onclick={() => {
-				copyToClipboard(pr.htmlUrl);
-				contextMenuEl?.close();
-			}}
-		/>
-		<ContextMenuItem
-			label="Show details"
-			onclick={() => {
-				openPrDetailsModal();
-				contextMenuEl?.close();
-			}}
-		/>
-		<ContextMenuItem
-			label="Refetch status"
-			onclick={() => {
-				prService?.fetch(pr.number, { forceRefetch: true });
-				contextMenuEl?.close();
-			}}
-		/>
-	</ContextMenuSection>
-	{#if hasChecks}
-		<ContextMenuSection>
-			<ContextMenuItem
-				label="Open checks"
-				onclick={() => {
-					openExternalUrl(`${pr.htmlUrl}/checks`);
-					contextMenuEl?.close();
-				}}
-			/>
-			<ContextMenuItem
-				label="Copy checks"
-				onclick={() => {
-					copyToClipboard(`${pr.htmlUrl}/checks`);
-					contextMenuEl?.close();
-				}}
-			/>
-		</ContextMenuSection>
-	{/if}
-</ContextMenu>
-
-<div
-	bind:this={contextMenuTarget}
-	role="article"
-	class="pr-header"
-	oncontextmenu={(e: MouseEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
-		contextMenuEl?.open(e);
-	}}
->
-	<div class="text-13 text-semibold pr-header-title">
-		<span style="color: var(--clr-scale-ntrl-50)">PR #{pr?.number}:</span>
-		<span>{pr?.title}</span>
-	</div>
-	<div class="pr-header-tags">
-		<Badge
-			reversedDirection
-			size="tag"
-			icon={prStatusInfo.icon}
-			style={prStatusInfo.style}
-			kind="soft"
-			tooltip="PR status"
-		>
-			{prStatusInfo.text}
-		</Badge>
-		{#if !pr.closedAt}
-			<ChecksPolling
-				branchName={pr.sourceBranch}
-				isFork={pr.fork}
-				isMerged={pr.merged}
-				bind:hasChecks
-			/>
+<ReduxResult result={prQuery?.result} projectId="dummy">
+	{#snippet children(pr)}
+		{#if poll}
+			<PullRequestPolling number={pr.number} />
 		{/if}
-		{#if pr.htmlUrl}
-			<Button
-				icon="open-link"
-				size="tag"
-				kind="outline"
-				tooltip="Open in browser"
-				onclick={() => {
-					openExternalUrl(pr.htmlUrl);
-				}}
-			>
-				View PR
-			</Button>
-		{/if}
-	</div>
 
-	<!--
-        We can't show the merge button until we've waited for checks
-
-        We use a octokit.checks.listForRef to find checks running for a PR, but right after
-        creation this request succeeds but returns an empty array. So we need a better way
-        determining "no checks will run for this PR" such that we can show the merge button
-        immediately.
-        -->
-	<div class="pr-header-actions">
-		{#if pr.state === 'open'}
-			<MergeButton
-				wide
-				projectId={project.id}
-				disabled={mergeStatus.disabled}
-				tooltip={mergeStatus.tooltip}
-				loading={isMerging}
-				onclick={async (method) => {
-					if (!pr) return;
-					isMerging = true;
-					try {
-						await prService?.merge(method, pr.number);
-
-						// In a stack, after merging, update the new bottom PR target
-						// base branch to master if necessary
-						if ($baseBranch && shouldUpdateTargetBaseBranch && prService && child?.prNumber) {
-							const targetBase = $baseBranch.branchName.replace(`${$baseBranch.remoteName}/`, '');
-							await prService.update(child.prNumber, { targetBase });
+		<ContextMenu bind:this={contextMenuEl} rightClickTrigger={container}>
+			<ContextMenuSection>
+				<ContextMenuItem
+					label="Open in browser"
+					onclick={() => {
+						urlService.openExternalUrl(pr.htmlUrl);
+						contextMenuEl?.close();
+					}}
+				/>
+				<ContextMenuItem
+					label="Copy link"
+					onclick={() => {
+						clipboardService.write(pr.htmlUrl, { message: 'PR link copied' });
+						contextMenuEl?.close();
+					}}
+				/>
+				<ContextMenuItem
+					label="Refetch status"
+					onclick={() => {
+						prService?.fetch(pr.number, { forceRefetch: true });
+						contextMenuEl?.close();
+						if (hasChecks) {
+							checksService?.fetch(pr.sourceBranch, { forceRefetch: true });
 						}
+					}}
+				/>
+			</ContextMenuSection>
+			{#if hasChecks}
+				<ContextMenuSection>
+					<ContextMenuItem
+						label="Open checks"
+						onclick={() => {
+							urlService.openExternalUrl(`${pr.htmlUrl}/checks`);
+							contextMenuEl?.close();
+						}}
+					/>
+					<ContextMenuItem
+						label="Copy checks"
+						onclick={() => {
+							clipboardService.write(`${pr.htmlUrl}/checks`, { message: 'Checks link copied' });
+							contextMenuEl?.close();
+						}}
+					/>
+				</ContextMenuSection>
+			{/if}
+		</ContextMenu>
 
-						await Promise.all([
-							baseBranchService.fetchFromRemotes(),
-							vbranchService.refresh(),
-							baseBranchService.refresh()
-						]);
-					} catch (err) {
-						console.error(err);
-						showError('Failed to merge PR', err);
-					} finally {
-						isMerging = false;
-					}
-				}}
-			/>
-		{:else if !pr.merged}
-			<AsyncButton
-				kind="outline"
-				disabled={reopenStatus.disabled}
-				tooltip={reopenStatus.tooltip}
-				action={handleReopenPr}
-			>
-				Reopen pull request
-			</AsyncButton>
-		{/if}
-	</div>
-</div>
+		<div
+			data-testid={testId}
+			bind:this={container}
+			role="article"
+			class="review-card pr-card"
+			oncontextmenu={(e: MouseEvent) => {
+				e.preventDefault();
+				e.stopPropagation();
+				contextMenuEl?.open(e);
+			}}
+		>
+			<div class="pr-actions">
+				<Button
+					kind="outline"
+					size="tag"
+					icon="copy-small"
+					tooltip="Copy {abbr} link"
+					onclick={() => {
+						clipboardService.write(pr.htmlUrl, { message: 'PR link copied' });
+					}}
+				/>
+				<Button
+					kind="outline"
+					size="tag"
+					icon="open-link"
+					tooltip="Open {abbr} in browser"
+					onclick={() => {
+						urlService.openExternalUrl(pr.htmlUrl);
+					}}
+				/>
+			</div>
+
+			<div class="text-13 text-semibold pr-row">
+				<Icon name={getForgeLogo(forgeName)} />
+				<h4 class="text-14 text-semibold">
+					{`${abbr} ${symbol}${pr.number}`}
+				</h4>
+
+				<PrStatusBadge testId={TestId.PRStatusBadge} {pr} />
+			</div>
+			<div class="text-12 pr-row">
+				<div class="factoid">
+					{#if pr.reviewers.length > 0}
+						<span class="label">Reviewers:</span>
+						<div class="avatar-group-container">
+							<AvatarGroup avatars={pr.reviewers} />
+						</div>
+					{:else}
+						<span class="label italic">No reviewers</span>
+					{/if}
+				</div>
+				<span class="seperator">•</span>
+				<div class="factoid">
+					<span class="label">
+						<Icon name="chat-small" />
+					</span>
+					<span>{pr.commentsCount}</span>
+				</div>
+			</div>
+
+			{#if button}
+				<div class="pr-row">
+					{@render button({ pr, mergeStatus, reopenStatus })}
+				</div>
+			{/if}
+		</div>
+	{/snippet}
+</ReduxResult>
 
 <style lang="postcss">
-	.pr-header {
-		position: relative;
+	.pr-row {
 		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
 
-	.pr-header-title {
-		color: var(--clr-scale-ntrl-0);
-		user-select: text;
-		cursor: text;
-	}
-
-	.pr-header-tags {
-		display: flex;
-		gap: 4px;
-	}
-
-	.pr-header-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-
-		/* don't display if empty */
 		&:empty {
 			display: none;
 		}
+	}
+
+	.factoid {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+
+		> .label {
+			display: flex;
+			color: var(--clr-text-2);
+
+			&.italic {
+				font-style: italic;
+			}
+		}
+	}
+
+	.seperator {
+		transform: translateY(-1.5px);
+		color: var(--clr-text-3);
+	}
+
+	.pr-actions {
+		display: flex;
+		position: absolute;
+		top: 8px;
+		right: 8px;
+		gap: 4px;
 	}
 </style>

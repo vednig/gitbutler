@@ -2,28 +2,32 @@
 	import FullviewLoading from '$components/FullviewLoading.svelte';
 	import ProblemLoadingRepo from '$components/ProblemLoadingRepo.svelte';
 	import ProjectSetup from '$components/ProjectSetup.svelte';
-	import { getRemoteBranches } from '$lib/baseBranch/baseBranchService';
-	import { Project } from '$lib/project/project';
-	import { getContext } from '@gitbutler/shared/context';
+	import { BASE_BRANCH_SERVICE } from '$lib/baseBranch/baseBranchService.svelte';
+	import { inject } from '@gitbutler/core/context';
 
-	const project = getContext(Project);
+	const { projectId }: { projectId: string } = $props();
+	const baseBranchService = inject(BASE_BRANCH_SERVICE);
+	const remoteBranchesQuery = $derived(baseBranchService.remoteBranches(projectId));
 </script>
 
-{#await getRemoteBranches(project.id)}
+{#if remoteBranchesQuery.result.isLoading}
 	<!--TODO: Add project id -->
 	<FullviewLoading />
-{:then remoteBranches}
-	{#if remoteBranches.length === 0}
+{:else if remoteBranchesQuery.result.isSuccess}
+	{@const remoteBranches = remoteBranchesQuery.response}
+	{#if !remoteBranches || remoteBranches.length === 0}
 		<ProblemLoadingRepo
+			{projectId}
 			error="Currently, GitButler requires a remote branch to base its virtual branch work on. To
 						use virtual branches, please push your code to a remote branch to use as a base"
 		/>
 	{:else}
-		<ProjectSetup {remoteBranches} />
+		<ProjectSetup {projectId} {remoteBranches} />
 	{/if}
-{:catch}
+{:else if remoteBranchesQuery.result.isError}
 	<ProblemLoadingRepo
+		{projectId}
 		error="Currently, GitButler requires a remote branch to base its virtual branch work on. To
 						use virtual branches, please push your code to a remote branch to use as a base"
 	/>
-{/await}
+{/if}

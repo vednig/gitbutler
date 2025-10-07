@@ -1,25 +1,30 @@
 //! The machinery used to alter and mutate commits in various ways whilst adjusting descendant commits within a [reference frame](ReferenceFrame).
 
+use crate::{DiffSpec, commit_engine::reference_frame::InferenceMode};
 use anyhow::{Context, bail};
 use bstr::BString;
 use but_core::RepositoryExt;
-use but_core::unified_diff::DiffHunk;
 use but_rebase::RebaseOutput;
-use but_rebase::commit::CommitterMode;
+use but_rebase::commit::DateMode;
+use but_rebase::merge::ConflictErrorContext;
+use gitbutler_command_context::CommandContext;
 use gitbutler_project::access::WorktreeWritePermission;
 use gitbutler_stack::{StackId, VirtualBranchesHandle, VirtualBranchesState};
 use gix::prelude::ObjectIdExt as _;
 use gix::refs::transaction::PreviousValue;
-use serde::{Deserialize, Serialize};
 
-mod tree;
-use crate::commit_engine::reference_frame::InferenceMode;
+pub(crate) mod tree;
 use tree::{CreateTreeOutcome, create_tree};
 
 pub(crate) mod index;
 /// Utility types
 pub mod reference_frame;
 mod refs;
+
+mod hunks;
+use crate::WorkspaceCommit;
+pub use hunks::apply_hunks;
+pub use tree::apply_worktree_changes;
 
 /// Types for use in the frontend with serialization support.
 pub mod ui;
@@ -39,11 +44,16 @@ pub enum Destination {
         parent_commit_id: Option<gix::ObjectId>,
         /// The stack and reference the commit is supposed to go into. It is necessary to disambiguate the reference update.
         stack_segment: Option<StackSegmentId>,
-        /// Use `message` as commit message for the new commit.
+        /// Use `message` as a commit message for the new commit.
         message: String,
     },
     /// Amend all changes to the given commit, leaving all other aspects of the commit unchanged.
-    AmendCommit(gix::ObjectId),
+    AmendCommit {
+        /// The commit to use as a base to amend to. It will be rewritten, retaining its parents.
+        commit_id: gix::ObjectId,
+        /// If `Some()`, set the commit message as well.
+        new_message: Option<String>,
+    },
 }
 
 /// The stack and the branch the commit is supposed to go into.
@@ -59,7 +69,7 @@ impl Destination {
     pub(self) fn stack_segment(&self) -> Option<&StackSegmentId> {
         match self {
             Destination::NewCommit { stack_segment, .. } => stack_segment.as_ref(),
-            Destination::AmendCommit(..) => None,
+            Destination::AmendCommit { .. } => None,
         }
     }
 }
@@ -74,54 +84,15 @@ pub struct MoveSourceCommit {
     pub branch_tip: gix::ObjectId,
 }
 
-/// A change that should be used to create a new commit or alter an existing one, along with enough information to know where to find it.
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct DiffSpec {
-    /// The previous location of the entry, the source of a rename if there was one.
-    pub previous_path: Option<BString>,
-    /// The worktree-relative path to the worktree file with the content to commit.
+/// The range of a hunk as denoted by a 1-based starting line, and the amount of lines from there.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct HunkRange {
+    /// The number of the first line in the hunk, 1 based.
+    pub start: u32,
+    /// The amount of lines in the range.
     ///
-    /// If `hunks` is empty, this means the current content of the file should be committed.
-    pub path: BString,
-    /// If one or more hunks are specified, match them with actual changes currently in the worktree.
-    /// Failure to match them will lead to the change being dropped.
-    /// If empty, the whole file is taken as is if this seems to be an addition.
-    /// Otherwise, the whole file is being deleted.
-    pub hunk_headers: Vec<HunkHeader>,
-}
-
-/// The header of a hunk that represents a change to a file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HunkHeader {
-    /// The 1-based line number at which the previous version of the file started.
-    pub old_start: u32,
-    /// The non-zero amount of lines included in the previous version of the file.
-    pub old_lines: u32,
-    /// The 1-based line number at which the new version of the file started.
-    pub new_start: u32,
-    /// The non-zero amount of lines included in the new version of the file.
-    pub new_lines: u32,
-}
-
-impl From<but_core::unified_diff::DiffHunk> for HunkHeader {
-    fn from(
-        DiffHunk {
-            old_start,
-            old_lines,
-            new_start,
-            new_lines,
-            // TODO(performance): if difflines are discarded, we could also just not compute them.
-            diff: _,
-        }: DiffHunk,
-    ) -> Self {
-        HunkHeader {
-            old_start,
-            old_lines,
-            new_start,
-            new_lines,
-        }
-    }
+    /// If `0`, this is an empty hunk.
+    pub lines: u32,
 }
 
 /// A type used in [`CreateCommitOutcome`] to indicate how a reference was changed so it keeps pointing
@@ -164,7 +135,8 @@ pub struct CreateCommitOutcome {
 }
 
 /// Provide a description of why a [`DiffSpec`] was rejected for application to the tree of a commit.
-#[derive(Default, Debug, Copy, Clone, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum RejectionReason {
     /// All changes were applied, but they didn't end up effectively change the tree to something differing from the target tree.
     /// This means the changes were a no-op.
@@ -174,6 +146,11 @@ pub enum RejectionReason {
     NoEffectiveChanges,
     /// The final cherry-pick to bring the new tree down onto the target tree (merge it in) failed with a conflict.
     CherryPickMergeConflict,
+    /// The final merge of the workspace commit failed with a conflict.
+    WorkspaceMergeConflict,
+    /// The final merge of the workspace commit failed with a conflict,
+    /// but the involved file wasn't anything the user provided as diff-spec.
+    WorkspaceMergeConflictOfUnrelatedFile,
     /// This is just a theoretical possibility that *could* happen if somebody deletes a file that was there before *right after* we checked its
     /// metadata and found that it still exists.
     /// So if you see this, you could also have won the lottery.
@@ -191,7 +168,7 @@ pub enum RejectionReason {
     /// This can happen if the target tree has an entry that isn't of the same type as the source worktree changes.
     UnsupportedTreeEntry,
     /// The DiffSpec points to an actual change, or a subset of that change using a file path and optionally hunks into that file.
-    /// However, the actual change wasn't found or didn't match up in turn of hunks.
+    /// However, at least one hunk was not fully contained.
     MissingDiffSpecAssociation,
 }
 
@@ -208,6 +185,23 @@ pub enum RejectionReason {
 /// Note that no [`index`](CreateCommitOutcome::index) is produced here as the `HEAD` isn't queried and doesn't play a role.
 ///
 /// No reference is touched in the process.
+///
+/// ### Hunk-based discarding
+///
+/// When an instance in `changes` contains hunks, these are the hunks to be committed. If they match a whole hunk in the worktree changes,
+/// it will be committed in its entirety.
+///
+/// ### Sub-Hunk discarding
+///
+/// It's possible to specify ranges of hunks to discard. To do that, they need an *anchor*. The *anchor* is the pair of
+/// `(line_number, line_count)` that should not be changed, paired with the *other* pair with the new `(line_number, line_count)`
+/// to discard.
+///
+/// For instance, when there is a single patch `-1,10 +1,10` and we want to commit the removed 5th line *and* the added 5th line,
+/// we'd specify *just* two selections, one in the old via `-5,1 +1,10` and one in the new via `-1,10 +5,1`.
+/// This works because internally, it will always match the hunks (and sub-hunks) with their respective pairs obtained through a
+/// worktree status, using the anchor, and apply an additional processing step to get the actual old/new hunk pairs to use when
+/// building the buffer to commit.
 pub fn create_commit(
     repo: &gix::Repository,
     destination: Destination,
@@ -224,7 +218,7 @@ pub fn create_commit(
             parent_commit_id: Some(parent),
             ..
         } => vec![*parent],
-        Destination::AmendCommit(commit_id) => commit_id
+        Destination::AmendCommit { commit_id, .. } => commit_id
             .attach(repo)
             .object()?
             .peel_to_commit()?
@@ -233,15 +227,32 @@ pub fn create_commit(
             .collect(),
     };
 
-    if !matches!(destination, Destination::AmendCommit(_)) && parents.len() > 1 {
+    if !matches!(destination, Destination::AmendCommit { .. }) && parents.len() > 1 {
         bail!("cannot currently handle more than 1 parent")
     }
+
+    let target_tree = match &destination {
+        Destination::NewCommit {
+            parent_commit_id: None,
+            ..
+        } => gix::ObjectId::empty_tree(repo.object_hash()),
+        Destination::NewCommit {
+            parent_commit_id: Some(base_commit),
+            ..
+        }
+        | Destination::AmendCommit {
+            commit_id: base_commit,
+            ..
+        } => but_core::Commit::from_id(base_commit.attach(repo))?
+            .tree_id_or_auto_resolution()?
+            .detach(),
+    };
 
     let CreateTreeOutcome {
         rejected_specs,
         destination_tree,
         changed_tree_pre_cherry_pick,
-    } = create_tree(repo, &destination, move_source, changes, context_lines)?;
+    } = create_tree(repo, target_tree, move_source, changes, context_lines)?;
     let new_commit = if let Some(new_tree) = destination_tree {
         match destination {
             Destination::NewCommit {
@@ -255,18 +266,19 @@ pub fn create_commit(
                 )?;
                 Some(new_commit)
             }
-            Destination::AmendCommit(commit_id) => {
-                let mut commit = commit_id
-                    .attach(repo)
-                    .object()?
-                    .peel_to_commit()?
-                    .decode()?
-                    .to_owned();
+            Destination::AmendCommit {
+                commit_id,
+                new_message,
+            } => {
+                let mut commit = but_core::Commit::from_id(commit_id.attach(repo))?;
                 commit.tree = new_tree;
+                if let Some(message) = new_message {
+                    commit.message = message.into();
+                }
                 Some(but_rebase::commit::create(
                     repo,
-                    commit,
-                    CommitterMode::Update,
+                    commit.inner,
+                    DateMode::CommitterUpdateAuthorUpdate,
                 )?)
             }
         }
@@ -329,7 +341,7 @@ pub fn create_commit_and_update_refs(
         repo,
         destination.clone(),
         move_source,
-        changes,
+        changes.clone(),
         context_lines,
     )?;
 
@@ -337,22 +349,57 @@ pub fn create_commit_and_update_refs(
         return Ok(out);
     };
 
-    let commit_to_find = match destination {
+    let (commit_to_find, is_amend) = match destination {
         Destination::NewCommit {
             parent_commit_id, ..
-        } => parent_commit_id,
-        Destination::AmendCommit(commit) => Some(commit),
+        } => (parent_commit_id, false),
+        Destination::AmendCommit { commit_id, .. } => (Some(commit_id), true),
     };
 
     if let Some(commit_in_graph) = commit_to_find {
         let mut all_refs_by_id = gix::hashtable::HashMap::<_, Vec<_>>::default();
-        for (commit_id, git_reference) in repo
-            .references()?
-            .prefixed("refs/heads/")?
-            .chain(repo.references()?.prefixed("refs/gitbutler/")?)
-            .filter_map(Result::ok)
-            .filter_map(|r| r.try_id().map(|id| (id.detach(), r.inner.name)))
-        {
+        let mut checked_out_ref_name = None;
+        let checked_out_ref = repo.head_ref()?.and_then(|mut r| {
+            let id = r.peel_to_id().ok()?.detach();
+            checked_out_ref_name = Some(r.inner.name.clone());
+            Some((id, r.inner.name))
+        });
+        let (platform_storage, platform_storage_2);
+        let checked_out_and_gitbutler_refs =
+            checked_out_ref
+                .into_iter()
+                // TODO: remove this as `refs/gitbutler/` won't contain relevant refs anymore.
+                .chain({
+                    platform_storage_2 = repo.references()?;
+                    platform_storage_2
+                        .prefixed("refs/gitbutler/")?
+                        .filter_map(Result::ok)
+                        .filter_map(|r| r.try_id().map(|id| (id.detach(), r.inner.name)))
+                })
+                .chain(
+                    // When amending, we want to update all branches that pointed to the old commit to now point to the new commit.
+                    if is_amend {
+                        Box::new({
+                            platform_storage = repo.references()?;
+                            platform_storage
+                                .prefixed("refs/heads/")?
+                                .filter_map(Result::ok)
+                                .filter_map(|r| {
+                                    let is_checked_out = checked_out_ref_name.as_ref().is_some_and(
+                                        |checked_out_ref| checked_out_ref == &r.inner.name,
+                                    );
+                                    if is_checked_out {
+                                        None
+                                    } else {
+                                        r.try_id().map(|id| (id.detach(), r.inner.name))
+                                    }
+                                })
+                        }) as Box<dyn Iterator<Item = _>>
+                    } else {
+                        Box::new(std::iter::empty())
+                    },
+                );
+        for (commit_id, git_reference) in checked_out_and_gitbutler_refs {
             all_refs_by_id
                 .entry(commit_id)
                 .or_default()
@@ -367,7 +414,6 @@ pub fn create_commit_and_update_refs(
             refs::rewrite(
                 repo,
                 vb,
-                None,
                 all_refs_by_id,
                 [(commit_in_graph, new_commit)],
                 &mut out.references,
@@ -400,14 +446,48 @@ pub fn create_commit_and_update_refs(
                 .collect();
             if !found_marker {
                 bail!(
-                    "Branch tip at {branch_tip} didn't contain the affected commit - cannot rebase"
+                    "Branch tip at {branch_tip} didn't contain the affected commit {commit_in_graph} - cannot rebase"
                 );
             }
 
             let workspace_tip = frame
                 .workspace_tip
-                .filter(|tip| !commits_to_rebase.contains(tip));
+                .filter(|ws_tip| !commits_to_rebase.contains(ws_tip));
             let rebase = {
+                fn conflicts_to_specs(
+                    outcome: &mut CreateCommitOutcome,
+                    conflicts: &[BString],
+                    changes: &[DiffSpec],
+                ) -> anyhow::Result<()> {
+                    outcome
+                        .rejected_specs
+                        .extend(conflicts.iter().map(|conflicting_rela_path| {
+                            changes
+                                .iter()
+                                .find_map(|spec| {
+                                    (spec.path == *conflicting_rela_path
+                                        || spec.previous_path.as_ref()
+                                            == Some(conflicting_rela_path))
+                                    .then_some((
+                                        RejectionReason::WorkspaceMergeConflict,
+                                        spec.to_owned(),
+                                    ))
+                                })
+                                .unwrap_or_else(|| {
+                                    (
+                                        RejectionReason::WorkspaceMergeConflictOfUnrelatedFile,
+                                        DiffSpec {
+                                            previous_path: None,
+                                            path: conflicting_rela_path.to_owned(),
+                                            hunk_headers: vec![],
+                                        },
+                                    )
+                                })
+                        }));
+                    outcome.new_commit = None;
+                    outcome.changed_tree_pre_cherry_pick = None;
+                    Ok(())
+                }
                 // Set commits leading up to the tip on top of the new commit, serving as base.
                 let mut builder = but_rebase::Rebase::new(repo, new_commit, Some(commit_in_graph))?;
                 builder.steps(commits_to_rebase.into_iter().rev().map(|commit_id| {
@@ -417,18 +497,81 @@ pub fn create_commit_and_update_refs(
                     }
                 }))?;
                 if let Some(workspace_tip) = workspace_tip {
+                    // Special Hack (https://github.com/gitbutlerapp/gitbutler/pull/7976)
+                    // See if `branch_tip` isn't yet in the workspace-tip if it is managed, and if so, add it
+                    // so it's going to be re-merged.
+                    let wsc = WorkspaceCommit::from_id(workspace_tip.attach(repo))?;
+                    let commit_id = if wsc.is_managed() /* we can change the commit */
+                        && !wsc.inner.parents.contains(&branch_tip) /* the branch tip we know isn't yet merged */
+                        // but the tip is known to the workspace
+                        && vb.branches.values().any(|s| {
+                        s.head_oid(repo)
+                            .is_ok_and(|head_id| head_id == branch_tip)
+                    }) {
+                        let mut stacks: Vec<_> = vb
+                            .branches
+                            .values()
+                            .filter(|stack| stack.in_workspace)
+                            .map(|stack| crate::ui::StackEntryNoOpt::try_new(repo, stack))
+                            .collect::<Result<_, _>>()?;
+                        stacks.sort_by(|a, b| a.name().cmp(&b.name()));
+                        let new_wc = WorkspaceCommit::new_from_stacks(stacks, repo.object_hash());
+                        repo.write_object(&new_wc)?.detach()
+                    } else {
+                        workspace_tip
+                    };
                     // We can assume the workspace tip is connected to a pick (or else the rebase will fail)
                     builder.steps([but_rebase::RebaseStep::Pick {
-                        commit_id: workspace_tip,
+                        commit_id,
                         new_message: None,
                     }])?;
+                    match builder.rebase() {
+                        Ok(mut outcome) => {
+                            if commit_id != workspace_tip {
+                                let Some(rewritten_old) =
+                                    outcome.commit_mapping.iter_mut().find_map(
+                                        |(_base, old, _new)| (old == &commit_id).then_some(old),
+                                    )
+                                else {
+                                    bail!(
+                                        "BUG: Needed to find modified {commit_id} to set it back its previous value, but couldn't find it"
+                                    );
+                                };
+                                *rewritten_old = workspace_tip;
+                            }
+                            outcome
+                        }
+                        Err(err) => {
+                            return if let Some(conflicts) =
+                                err.downcast_ref::<ConflictErrorContext>()
+                            {
+                                conflicts_to_specs(&mut out, &conflicts.paths, &changes)?;
+                                Ok(out)
+                            } else {
+                                Err(err)
+                            };
+                        }
+                    }
+                } else {
+                    match builder.rebase() {
+                        Ok(rebase) => rebase,
+                        Err(err) => {
+                            return if let Some(conflicts) =
+                                err.downcast_ref::<ConflictErrorContext>()
+                            {
+                                conflicts_to_specs(&mut out, &conflicts.paths, &changes)?;
+                                Ok(out)
+                            } else {
+                                Err(err)
+                            };
+                        }
+                    }
                 }
-                builder.rebase()?
             };
+
             refs::rewrite(
                 repo,
                 vb,
-                workspace_tip,
                 all_refs_by_id,
                 rebase
                     .commit_mapping
@@ -478,10 +621,10 @@ pub fn create_commit_and_update_refs(
 }
 
 /// Like [`create_commit_and_update_refs()`], but integrates with an existing GitButler `project`
-/// if present. Alternatively it uses the current `HEAD` as only reference point.
+/// if present. Alternatively, it uses the current `HEAD` as only reference point.
 /// Note that virtual branches will be updated and written back after this call, which will obtain
 /// an exclusive workspace lock as well.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn create_commit_and_update_refs_with_project(
     repo: &gix::Repository,
     project: &gitbutler_project::Project,
@@ -496,15 +639,21 @@ pub fn create_commit_and_update_refs_with_project(
     let mut vb = vbh.read_file()?;
     let frame = match maybe_stackid {
         None => {
-            let maybe_commit_id = match &destination {
+            let (maybe_commit_id, maybe_stack_id) = match &destination {
                 Destination::NewCommit {
-                    parent_commit_id, ..
-                } => *parent_commit_id,
-                Destination::AmendCommit(commit_id) => Some(*commit_id),
+                    parent_commit_id,
+                    stack_segment,
+                    ..
+                } => (*parent_commit_id, stack_segment.clone().map(|s| s.stack_id)),
+                Destination::AmendCommit { commit_id, .. } => (Some(*commit_id), None),
             };
-            match maybe_commit_id {
-                None => ReferenceFrame::default(),
-                Some(commit_id) => {
+
+            match (maybe_commit_id, maybe_stack_id) {
+                (None, None) => ReferenceFrame::default(),
+                (_, Some(stack_id)) => {
+                    ReferenceFrame::infer(repo, &vb, InferenceMode::StackId(stack_id))?
+                }
+                (Some(commit_id), None) => {
                     ReferenceFrame::infer(repo, &vb, InferenceMode::CommitIdInStack(commit_id))?
                 }
             }
@@ -526,7 +675,6 @@ pub fn create_commit_and_update_refs_with_project(
 }
 
 /// Create a commit exactly as specified, and sign it depending on Git and GitButler specific Git configuration.
-#[allow(clippy::too_many_arguments)]
 fn create_possibly_signed_commit(
     repo: &gix::Repository,
     author: gix::actor::Signature,
@@ -545,5 +693,64 @@ fn create_possibly_signed_commit(
         parents: parents.into_iter().map(Into::into).collect(),
         extra_headers: (&commit_headers.unwrap_or_default()).into(),
     };
-    but_rebase::commit::create(repo, commit, CommitterMode::Keep)
+    but_rebase::commit::create(repo, commit, DateMode::CommitterKeepAuthorKeep)
+}
+
+/// Less pure but a simpler version of [`create_commit_and_update_refs_with_project`]
+pub fn create_commit_simple(
+    ctx: &CommandContext,
+    stack_id: StackId,
+    parent_id: Option<gix::ObjectId>,
+    worktree_changes: Vec<DiffSpec>,
+    message: String,
+    stack_branch_name: String,
+    perm: &mut WorktreeWritePermission,
+) -> anyhow::Result<CreateCommitOutcome> {
+    let repo = but_core::open_repo_for_merging(ctx.project().worktree_path())?;
+    // If parent_id was not set but a stack branch name was provided, pick the current head of that branch as parent.
+    let parent_commit_id: Option<gix::ObjectId> = match parent_id {
+        Some(id) => Some(id),
+        None => {
+            let state = VirtualBranchesHandle::new(ctx.project().gb_dir());
+            let stack = state.get_stack(stack_id)?;
+            if !stack.heads(true).contains(&stack_branch_name) {
+                return Err(anyhow::anyhow!(
+                    "Stack {stack_id} does not have branch {stack_branch_name}"
+                ));
+            }
+            let reference = repo
+                .try_find_reference(&stack_branch_name)
+                .map_err(anyhow::Error::from)?;
+            if let Some(mut r) = reference {
+                Some(r.peel_to_commit().map_err(anyhow::Error::from)?.id)
+            } else {
+                return Err(anyhow::anyhow!("No branch {stack_branch_name} found"));
+            }
+        }
+    };
+    let outcome = create_commit_and_update_refs_with_project(
+        &repo,
+        ctx.project(),
+        Some(stack_id),
+        Destination::NewCommit {
+            parent_commit_id,
+            message: message.clone(),
+            stack_segment: Some(StackSegmentId {
+                stack_id,
+                segment_ref: format!("refs/heads/{stack_branch_name}")
+                    .try_into()
+                    .map_err(anyhow::Error::from)?,
+            }),
+        },
+        None,
+        worktree_changes,
+        ctx.app_settings().context_lines,
+        perm,
+    );
+
+    let outcome = outcome?;
+    if !outcome.rejected_specs.is_empty() {
+        tracing::warn!(?outcome.rejected_specs, "Failed to commit at least one hunk");
+    }
+    Ok(outcome)
 }

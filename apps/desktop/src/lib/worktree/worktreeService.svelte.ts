@@ -1,9 +1,19 @@
-import { hasTauriExtra } from '$lib/state/backendQuery';
+import {
+	shouldRaiseDependencyError,
+	type DependencyError,
+	type HunkDependencies
+} from '$lib/dependencies/dependencies';
+import { shouldRaiseHunkAssignmentError, type HunkAssignment } from '$lib/hunks/hunk';
+import { showError } from '$lib/notifications/toasts';
+import { hasBackendExtra } from '$lib/state/backendQuery';
 import { createSelectByIds } from '$lib/state/customSelectors';
-import { ReduxTag } from '$lib/state/tags';
+import { invalidatesList, providesList, ReduxTag } from '$lib/state/tags';
+import { InjectionToken } from '@gitbutler/core/context';
 import { createEntityAdapter, type EntityState } from '@reduxjs/toolkit';
-import type { TreeChange, WorktreeChanges } from '$lib/hunks/change';
+import type { IgnoredChange, TreeChange, WorktreeChanges } from '$lib/hunks/change';
 import type { ClientState } from '$lib/state/clientState.svelte';
+
+export const WORKTREE_SERVICE = new InjectionToken<WorktreeService>('WorktreeService');
 
 /**
  * A service for tracking uncommitted changes.
@@ -18,29 +28,55 @@ export class WorktreeService {
 		this.api = injectEndpoints(state.backendApi);
 	}
 
-	/** Fetches and subscribes to a list of uncommitted changes. */
-	getChanges(projectId: string) {
-		const { getChanges } = this.api.endpoints;
-		const result = $derived(getChanges.useQuery({ projectId }, { transform: selectAll }));
+	treeChanges(projectId: string) {
+		return this.api.endpoints.worktreeChanges.useQuery(
+			{ projectId },
+			{ transform: (res) => res.rawChanges }
+		);
+	}
+
+	hunkAssignments(projectId: string) {
+		return this.api.endpoints.worktreeChanges.useQuery(
+			{ projectId },
+			{ transform: (res) => res.hunkAssignments }
+		);
+	}
+
+	worktreeData(projectId: string) {
+		const result = $derived(this.api.endpoints.worktreeChanges.useQuery({ projectId }));
 		return result;
 	}
 
-	/** Gets a specific change from any existing set of results. */
-	getChange(projectId: string, path: string) {
-		const { getChanges } = this.api.endpoints;
-		const result = $derived(
-			getChanges.useQueryState({ projectId }, { transform: (res) => selectById(res, path)! })
+	treeChangeByPath(projectId: string, path: string) {
+		const { worktreeChanges: getChanges } = this.api.endpoints;
+		return getChanges.useQueryState(
+			{ projectId },
+			{ transform: (res) => worktreeSelectors.selectById(res.changes, path)! }
 		);
-		return result;
 	}
 
-	/** Gets a set of changes by the given paths */
-	getChangesById(projectId: string, paths: string[]) {
-		const { getChanges } = this.api.endpoints;
-		const result = $derived(
-			getChanges.useQueryState({ projectId }, { transform: (res) => selectByIds(res, paths) })
+	treeChangesByPaths(projectId: string, paths: string[]) {
+		const { worktreeChanges: getChanges } = this.api.endpoints;
+		return getChanges.useQueryState(
+			{ projectId },
+			{ transform: (res) => worktreeSelectors.selectByIds(res.changes, paths) }
 		);
-		return result;
+	}
+
+	async fetchTreeChange(projectId: string, path: string) {
+		const { worktreeChanges } = this.api.endpoints;
+		return await worktreeChanges.fetch(
+			{ projectId },
+			{ transform: (res) => worktreeSelectors.selectById(res.changes, path)! }
+		);
+	}
+
+	/**
+	 * Exposes the worktreeChanges endpoint. This is currently intended to be
+	 * consumed by just the `DependencyService`.
+	 */
+	get worktreeChanges() {
+		return this.api.endpoints.worktreeChanges;
 	}
 }
 
@@ -53,27 +89,46 @@ function injectEndpoints(api: ClientState['backendApi']) {
 			 * It is necessary to access to individual results by their id's, so we use a redux
 			 * entity entity adapter to create the necessary selectors.
 			 */
-			getChanges: build.query<EntityState<TreeChange, string>, { projectId: string }>({
-				query: ({ projectId }) => ({ command: 'changes_in_worktree', params: { projectId } }),
+			worktreeChanges: build.query<
+				{
+					changes: EntityState<TreeChange, string>;
+					rawChanges: TreeChange[];
+					ignoredChanges: IgnoredChange[];
+					hunkAssignments: HunkAssignment[];
+					dependencies: HunkDependencies | undefined;
+					dependenciesError: DependencyError | undefined;
+				},
+				{ projectId: string }
+			>({
+				extraOptions: { command: 'changes_in_worktree' },
+				query: (args) => args,
 				/** Invalidating tags causes data to be refreshed. */
-				providesTags: [ReduxTag.WorktreeChanges],
+				providesTags: [providesList(ReduxTag.WorktreeChanges)],
 				/**
 				 * Sets up a subscription for changes to uncommitted changes until all consumers
 				 * of the query results have unsubscribed.
 				 */
 				async onCacheEntryAdded(arg, lifecycleApi) {
-					if (!hasTauriExtra(lifecycleApi.extra)) {
-						throw new Error('Redux dependency Tauri not found!');
+					if (!hasBackendExtra(lifecycleApi.extra)) {
+						throw new Error('Redux dependency Backend not found!');
 					}
 					// The `cacheDataLoaded` promise resolves when the result is first loaded.
 					await lifecycleApi.cacheDataLoaded;
-					const unsubscribe = lifecycleApi.extra.tauri.listen<WorktreeChanges>(
+					const unsubscribe = lifecycleApi.extra.backend.listen<WorktreeChanges>(
 						`project://${arg.projectId}/worktree_changes`,
 						(event) => {
-							lifecycleApi.dispatch(api.util.invalidateTags([ReduxTag.Diff]));
-							lifecycleApi.updateCachedData(() =>
-								worktreeAdapter.addMany(worktreeAdapter.getInitialState(), event.payload.changes)
-							);
+							lifecycleApi.updateCachedData(() => ({
+								changes: worktreeAdapter.addMany(
+									worktreeAdapter.getInitialState(),
+									event.payload.changes
+								),
+								rawChanges: event.payload.changes,
+								ignoredChanges: event.payload.ignoredChanges,
+								hunkAssignments: event.payload.assignments,
+								dependencies: event.payload.dependencies ?? undefined,
+								dependenciesError: event.payload.dependenciesError ?? undefined
+							}));
+							lifecycleApi.dispatch(api.util.invalidateTags([invalidatesList(ReduxTag.Diff)]));
 						}
 					);
 					// The `cacheEntryRemoved` promise resolves when the result is removed
@@ -84,18 +139,45 @@ function injectEndpoints(api: ClientState['backendApi']) {
 				 * For convenience we transform the result using the entity adapter such
 				 * that we can use selectors like `selectById`.
 				 */
-				async transformResponse(response: WorktreeChanges) {
-					return worktreeAdapter.addMany(worktreeAdapter.getInitialState(), response.changes);
+				transformResponse(response: WorktreeChanges) {
+					if (shouldRaiseDependencyError(response.dependenciesError)) {
+						showError(
+							'Failed to compute dependencies',
+							response.dependenciesError.description,
+							undefined,
+							'worktree-dependencies-error'
+						);
+					}
+
+					if (shouldRaiseHunkAssignmentError(response.assignmentsError)) {
+						showError(
+							'Failed to compute hunk assignments',
+							response.assignmentsError.description,
+							undefined,
+							'worktree-assignments-error'
+						);
+					}
+
+					return {
+						changes: worktreeAdapter.addMany(worktreeAdapter.getInitialState(), response.changes),
+						rawChanges: response.changes,
+						ignoredChanges: response.ignoredChanges,
+						hunkAssignments: response.assignments,
+						dependencies: response.dependencies ?? undefined,
+						dependenciesError: response.dependenciesError ?? undefined
+					};
 				}
 			})
 		})
 	});
 }
 
-const worktreeAdapter = createEntityAdapter<TreeChange, TreeChange['path']>({
+const worktreeAdapter = createEntityAdapter<TreeChange, string>({
 	selectId: (change) => change.path,
 	sortComparer: (a, b) => a.path.localeCompare(b.path)
 });
 
-const { selectAll, selectById } = worktreeAdapter.getSelectors();
-const selectByIds = createSelectByIds<TreeChange>();
+const worktreeSelectors = {
+	...worktreeAdapter.getSelectors(),
+	selectByIds: createSelectByIds<TreeChange>()
+};

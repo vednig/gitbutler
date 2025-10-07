@@ -1,10 +1,9 @@
 import { BitBucketBranch } from '$lib/forge/bitbucket/bitbucketBranch';
 import type { Forge, ForgeName } from '$lib/forge/interface/forge';
-import type { DetailedPullRequest, ForgeArguments } from '$lib/forge/interface/types';
-
-export type PrAction = 'creating_pr';
-export type PrState = { busy: boolean; branchId: string; action?: PrAction };
-export type PrCacheKey = { value: DetailedPullRequest | undefined; fetchedAt: Date };
+import type { ForgeArguments, ForgeUser } from '$lib/forge/interface/types';
+import type { ReactiveQuery } from '$lib/state/butlerModule';
+import type { ReduxTag } from '$lib/state/tags';
+import type { TagDescription } from '@reduxjs/toolkit/query';
 
 export const BITBUCKET_DOMAIN = 'bitbucket.org';
 
@@ -16,14 +15,27 @@ export const BITBUCKET_DOMAIN = 'bitbucket.org';
  */
 export class BitBucket implements Forge {
 	readonly name: ForgeName = 'bitbucket';
+	readonly authenticated: boolean;
 	private baseUrl: string;
 	private baseBranch: string;
 	private forkStr?: string;
 
-	constructor({ repo, baseBranch, forkStr }: ForgeArguments) {
-		this.baseUrl = `https://${BITBUCKET_DOMAIN}/${repo.owner}/${repo.name}`;
+	constructor({ repo, baseBranch, forkStr, authenticated }: ForgeArguments) {
+		// Use the protocol from repo if available, otherwise default to https
+		// For SSH remote URLs, always use HTTPS for browser compatibility
+		let protocol = repo.protocol?.endsWith(':')
+			? repo.protocol.slice(0, -1)
+			: repo.protocol || 'https';
+
+		// SSH URLs cannot be opened in browsers, so convert to HTTPS
+		if (protocol === 'ssh') {
+			protocol = 'https';
+		}
+
+		this.baseUrl = `${protocol}://${repo.domain}/${repo.owner}/${repo.name}`;
 		this.baseBranch = baseBranch;
 		this.forkStr = forkStr;
+		this.authenticated = authenticated;
 	}
 
 	branch(name: string) {
@@ -32,6 +44,12 @@ export class BitBucket implements Forge {
 
 	commitUrl(id: string): string {
 		return `${this.baseUrl}/commits/${id}`;
+	}
+
+	get user() {
+		return {
+			result: { status: 'uninitialized' as const, data: undefined }
+		} as ReactiveQuery<ForgeUser>;
 	}
 
 	get listService() {
@@ -51,6 +69,10 @@ export class BitBucket implements Forge {
 	}
 
 	get checks() {
+		return undefined;
+	}
+
+	invalidate(_tags: TagDescription<ReduxTag>[]) {
 		return undefined;
 	}
 }

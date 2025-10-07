@@ -2,21 +2,20 @@
 	import AiPromptSelect from '$components/AIPromptSelect.svelte';
 	import Section from '$components/Section.svelte';
 	import WelcomeSigninAction from '$components/WelcomeSigninAction.svelte';
-	import { projectAiGenEnabled } from '$lib/config/config';
-	import { Project } from '$lib/project/project';
-	import { UserService } from '$lib/user/userService';
-	import { getContext } from '@gitbutler/shared/context';
-	import Button from '@gitbutler/ui/Button.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
-	import Spacer from '@gitbutler/ui/Spacer.svelte';
-	import Toggle from '@gitbutler/ui/Toggle.svelte';
-	import { goto } from '$app/navigation';
+	import { projectAiExperimentalFeaturesEnabled, projectAiGenEnabled } from '$lib/config/config';
+	import { useSettingsModal } from '$lib/settings/settingsModal.svelte';
+	import { USER_SERVICE } from '$lib/user/userService';
+	import { inject } from '@gitbutler/core/context';
+	import { Button, SectionCard, Spacer, Toggle } from '@gitbutler/ui';
 
-	const userService = getContext(UserService);
-	const project = getContext(Project);
+	const { projectId }: { projectId: string } = $props();
+
+	const userService = inject(USER_SERVICE);
 	const user = userService.user;
+	const { openGeneralSettings } = useSettingsModal();
 
-	const aiGenEnabled = projectAiGenEnabled(project.id);
+	const aiGenEnabled = $derived(projectAiGenEnabled(projectId));
+	const experimentalAiGenEnabled = $derived(projectAiExperimentalFeaturesEnabled(projectId));
 </script>
 
 <Section>
@@ -33,34 +32,55 @@
 		<Spacer />
 	{/if}
 
-	<div class="options">
-		<SectionCard labelFor="aiGenEnabled" orientation="row">
-			{#snippet title()}
-				Enable branch and commit message generation
-			{/snippet}
-			{#snippet caption()}
-				If enabled, diffs will be sent to OpenAI or Anthropic's servers when pressing the "Generate
-				message" and "Generate branch name" button.
-			{/snippet}
-			{#snippet actions()}
-				<Toggle
-					id="aiGenEnabled"
-					checked={$aiGenEnabled}
-					onclick={() => {
-						$aiGenEnabled = !$aiGenEnabled;
-					}}
-				/>
-			{/snippet}
-		</SectionCard>
-	</div>
+	<SectionCard labelFor="aiGenEnabled" orientation="row">
+		{#snippet title()}
+			Enable branch and commit message generation
+		{/snippet}
+		{#snippet caption()}
+			If enabled, diffs will be sent to OpenAI or Anthropic's servers when pressing the "Generate
+			message" and "Generate branch name" button.
+		{/snippet}
+		{#snippet actions()}
+			<Toggle
+				id="aiGenEnabled"
+				checked={$aiGenEnabled}
+				onclick={() => {
+					$aiGenEnabled = !$aiGenEnabled;
+				}}
+			/>
+		{/snippet}
+	</SectionCard>
+
+	{#if $aiGenEnabled}
+		<div class="options">
+			<SectionCard labelFor="aiExperimental" orientation="row">
+				{#snippet title()}
+					Enable experimental AI features
+				{/snippet}
+				{#snippet caption()}
+					If enabled, you will be able to access the AI features currently in development. This also
+					requires you to use OpenAI through GitButler in order for the features to work.
+				{/snippet}
+				{#snippet actions()}
+					<Toggle
+						id="aiExperimental"
+						checked={$experimentalAiGenEnabled}
+						onclick={() => {
+							$experimentalAiGenEnabled = !$experimentalAiGenEnabled;
+						}}
+					/>
+				{/snippet}
+			</SectionCard>
+		</div>
+	{/if}
 
 	<SectionCard>
 		{#snippet title()}
 			Custom prompts
 		{/snippet}
 
-		<AiPromptSelect promptUse="commits" />
-		<AiPromptSelect promptUse="branches" />
+		<AiPromptSelect {projectId} promptUse="commits" />
+		<AiPromptSelect {projectId} promptUse="branches" />
 
 		<Spacer margin={8} />
 
@@ -68,7 +88,7 @@
 			You can apply your own custom prompts to the project. By default, the project uses GitButler
 			prompts, but you can create your own prompts in the general settings.
 		</p>
-		<Button kind="outline" icon="edit-text" onclick={async () => await goto('/settings/ai')}
+		<Button kind="outline" icon="edit" onclick={() => openGeneralSettings('ai')}
 			>Customize prompts</Button
 		>
 	</SectionCard>

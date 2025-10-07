@@ -4,6 +4,7 @@
 	interface Props {
 		hovered: boolean;
 		activated: boolean;
+		visible?: boolean;
 		label?: string;
 		extraPaddings?: {
 			top?: number;
@@ -13,7 +14,7 @@
 		};
 	}
 
-	const { hovered, activated, label = 'Drop here', extraPaddings }: Props = $props();
+	const { visible, hovered, activated, label = 'Drop here', extraPaddings }: Props = $props();
 	let defaultPadding = 4;
 
 	const extraPaddingTop = extraPaddings?.top ?? 0;
@@ -24,65 +25,85 @@
 
 <div
 	class="dropzone-target dropzone-wrapper"
+	class:visible
 	class:activated
 	class:hovered
-	style="--padding-top: {pxToRem(defaultPadding + extraPaddingTop)}; --padding-right: {pxToRem(
+	style="--padding-top: {pxToRem(defaultPadding + extraPaddingTop)}rem; --padding-right: {pxToRem(
 		defaultPadding + extraPaddingRight
-	)}; --padding-bottom: {pxToRem(defaultPadding + extraPaddingBottom)}; --padding-left: {pxToRem(
-		defaultPadding + extraPaddingLeft
-	)}"
+	)}rem; --padding-bottom: {pxToRem(
+		defaultPadding + extraPaddingBottom
+	)}rem; --padding-left: {pxToRem(defaultPadding + extraPaddingLeft)}rem"
 >
 	<div class="container">
-		<div class="dropzone-label">
-			<svg
-				class="dropzone-label-icon"
-				viewBox="0 0 12 12"
-				fill="none"
-				xmlns="http://www.w3.org/2000/svg"
-			>
-				<path d="M11 7L6 2M6 2L1 7M6 2L6 12" stroke="white" stroke-width="1.5" />
-			</svg>
+		{#if label !== ''}
+			<div class="dropzone-label">
+				<svg
+					class="dropzone-label-icon"
+					viewBox="0 0 15 14"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<path
+						d="M12.5303 7.73599L8.23738 3.4431C7.84686 3.05257 7.21369 3.05257 6.82317 3.4431L2.53027 7.73599"
+						stroke="currentColor"
+						stroke-width="1.5"
+					/>
+					<path d="M7.53027 3.73602L7.53027 11.736" stroke="currentColor" stroke-width="1.5" />
+				</svg>
 
-			<span class="text-12 text-semibold">{label}</span>
-		</div>
+				<span class="text-11 text-bold">{label}</span>
+			</div>
+		{/if}
 
-		<!-- add svg rectange -->
+		<!-- SVG rectangle to simulate a dashed outline with a precise dash offset. -->
 		<svg width="100%" height="100%" class="animated-rectangle">
-			<rect width="100%" height="100%" rx="5" ry="5" vector-effect="non-scaling-stroke" />
+			<rect width="100%" height="100%" rx="6" ry="6" vector-effect="non-scaling-stroke" />
 		</svg>
 	</div>
 </div>
 
 <style lang="postcss">
 	.dropzone-wrapper {
-		z-index: var(--z-ground);
+		--dropzone-fill: oklch(from var(--clr-scale-pop-50) l c h / 0.1);
+		--dropzone-stroke: oklch(from var(--clr-scale-pop-50) l c h / 0.8);
+
+		display: none;
+		z-index: var(--z-floating);
 		position: absolute;
-		width: 100%;
-		height: 100%;
 		top: 0;
 		left: 0;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		height: 100%;
 		padding-top: var(--padding-top);
 		padding-right: var(--padding-right);
 		padding-bottom: var(--padding-bottom);
 		padding-left: var(--padding-left);
 
-		display: none;
-		align-items: center;
-		justify-content: center;
-
 		transition:
 			transform 0.1s,
 			padding 0.1s;
 
-		/* It is very important that all children are pointer-events: none */
-		/* https://stackoverflow.com/questions/7110353/html5-dragleave-fired-when-hovering-a-child-element */
-		& * {
-			pointer-events: none;
+		&.visible {
+			display: flex;
+
+			& .animated-rectangle rect {
+				fill: transparent;
+				stroke: var(--clr-border-2);
+			}
 		}
 
-		&.activated {
+		&:not(.visible).activated {
 			display: flex;
 			animation: dropzone-scale 0.1s forwards;
+		}
+
+		&.visible.activated {
+			& .animated-rectangle rect {
+				fill: var(--dropzone-fill);
+				stroke: var(--dropzone-stroke);
+			}
 		}
 
 		&.hovered {
@@ -90,43 +111,48 @@
 
 			.animated-rectangle rect {
 				fill: oklch(from var(--clr-scale-pop-50) l c h / 0.16);
+				stroke: oklch(from var(--clr-scale-pop-50) l c h / 1);
+				animation: dash 4s linear infinite;
 			}
 
 			.dropzone-label {
-				opacity: 1;
 				transform: translateY(0) scale(1);
+				opacity: 1;
 			}
 		}
 	}
 
 	.container {
-		position: relative;
 		display: flex;
+		position: relative;
 		align-items: center;
 		justify-content: center;
 		width: 100%;
 		height: 100%;
+		pointer-events: none;
 	}
 
 	.dropzone-label {
-		opacity: 0;
 		display: flex;
+		z-index: 1;
 		align-items: center;
-		gap: 6px;
-		padding: 6px 10px;
-		border-radius: 100px;
-		color: var(--clr-theme-pop-on-element);
-		background-color: var(--clr-theme-pop-element);
+		padding: 4px 8px 4px 6px;
+		gap: 5px;
 		transform: translateY(3px) scale(0.95);
+		border-radius: 100px;
+		background-color: var(--clr-theme-ntrl-element);
+		color: var(--clr-theme-ntrl-on-element);
+		opacity: 0;
 
 		transition:
 			opacity 0.1s,
 			transform 0.15s;
+		will-change: transform, opacity;
 	}
 
 	.dropzone-label-icon {
-		width: 12px;
-		height: 12px;
+		width: 14px;
+		height: 14px;
 		animation: icon-shifting 1s infinite;
 	}
 
@@ -150,19 +176,15 @@
 		height: 100%;
 
 		& rect {
-			fill: oklch(from var(--clr-scale-pop-50) l c h / 0.1);
-			stroke: var(--clr-scale-pop-50);
-
+			fill: var(--dropzone-fill);
+			stroke: var(--dropzone-stroke);
 			stroke-width: 2px;
 			stroke-dasharray: 2;
 			stroke-dashoffset: 30;
 			transform-origin: center;
-
 			transition:
 				fill var(--transition-fast),
-				transform var(--transition-fast);
-
-			animation: dash 4s linear infinite;
+				stroke var(--transition-fast);
 		}
 	}
 

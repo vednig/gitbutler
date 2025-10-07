@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@gitbutler/ui/Icon.svelte';
+	import { Icon } from '@gitbutler/ui';
 	import type { Settings } from '$lib/settings/userSettings';
 	import type { Writable } from 'svelte/store';
 
@@ -62,11 +62,11 @@
 	}
 
 	.theme-card {
-		cursor: pointer;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 8px;
+		cursor: pointer;
 	}
 
 	.theme-card:hover {
@@ -79,9 +79,9 @@
 		position: relative;
 		width: 100%;
 		height: auto;
-		border-radius: var(--radius-m);
-		border: 1px solid var(--clr-border-2);
 		overflow: hidden;
+		border: 1px solid var(--clr-border-2);
+		border-radius: var(--radius-m);
 
 		& img {
 			width: 100%;
@@ -92,23 +92,24 @@
 
 	.theme-card__label {
 		padding: 6px;
-		text-align: center;
 		border-radius: var(--radius-m);
+		text-align: center;
 	}
 
 	.theme-card__icon {
+		display: flex;
 		z-index: 1;
 		position: absolute;
-		bottom: 6px;
-		right: 6px;
+		right: 8px;
+		bottom: 8px;
 		opacity: 0;
 	}
 
 	.hidden-input {
+		z-index: -1;
 		position: absolute;
 		width: 0;
 		height: 0;
-		z-index: -1;
 	}
 
 	/* MODIFIER */
@@ -122,7 +123,7 @@
 	}
 
 	.theme-card.selected .theme-card__icon {
-		opacity: 1;
 		transform: scale(1);
+		opacity: 1;
 	}
 </style>

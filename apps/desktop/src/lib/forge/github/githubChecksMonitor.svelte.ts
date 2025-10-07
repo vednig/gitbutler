@@ -1,12 +1,11 @@
 import { ghQuery } from '$lib/forge/github/ghQuery';
-import { type ChecksResult, type SuitesResult } from '$lib/forge/github/types';
-import { ReduxTag } from '$lib/state/tags';
+import { type ChecksResult } from '$lib/forge/github/types';
+import { eventualConsistencyCheck } from '$lib/forge/shared/progressivePolling';
+import { providesItem, ReduxTag } from '$lib/state/tags';
 import type { ChecksService } from '$lib/forge/interface/forgeChecksMonitor';
 import type { ChecksStatus } from '$lib/forge/interface/types';
 import type { QueryOptions } from '$lib/state/butlerModule';
 import type { GitHubApi } from '$lib/state/clientState.svelte';
-
-export const MIN_COMPLETED_AGE = 20000;
 
 export class GitHubChecksMonitor implements ChecksService {
 	private api: ReturnType<typeof injectEndpoints>;
@@ -15,31 +14,29 @@ export class GitHubChecksMonitor implements ChecksService {
 		this.api = injectEndpoints(gitHubApi);
 	}
 
-	get(branch: string, options?: QueryOptions) {
-		const result = $derived(
-			this.api.endpoints.listChecks.useQuery(branch, {
+	get(branchName: string, options?: QueryOptions) {
+		return this.api.endpoints.listChecks.useQuery(
+			{ ref: branchName },
+			{
 				transform: (result) => parseChecks(result),
 				...options
-			})
+			}
 		);
-		return result;
 	}
 
-	async getCheckSuites(ref: string, options?: QueryOptions) {
-		const result = await this.api.endpoints.listSuites.fetch(ref, {
-			forceRefetch: true,
-			...options
-		});
-		return result.data;
+	async fetch(branchName: string, options?: QueryOptions) {
+		return await this.api.endpoints.listChecks.fetch(
+			{ ref: branchName },
+			{
+				transform: (result) => parseChecks(result),
+				...options
+			}
+		);
 	}
+}
 
-	async fetchChecks(ref: string, options?: QueryOptions) {
-		const result = await this.api.endpoints.listChecks.fetch(ref, {
-			forceRefetch: true,
-			...options
-		});
-		return result.data;
-	}
+function hasChecks(data: ChecksResult): boolean {
+	return data.check_runs.length > 0;
 }
 
 function parseChecks(data: ChecksResult): ChecksStatus | null {
@@ -47,8 +44,9 @@ function parseChecks(data: ChecksResult): ChecksStatus | null {
 	// the pull request has been created.
 
 	// If there are no checks then there is no status to report
+	if (!hasChecks(data)) return null;
+
 	const checkRuns = data.check_runs;
-	if (checkRuns.length === 0) return null;
 
 	// Establish when the first check started running, useful for showing
 	// how long something has been running.
@@ -57,48 +55,47 @@ function parseChecks(data: ChecksResult): ChecksStatus | null {
 		.filter((startedAt) => startedAt !== null) as string[];
 	const startTimes = starts.map((startedAt) => new Date(startedAt));
 
-	const queued = checkRuns.filter((c) => c.status === 'queued').length;
-	const failed = checkRuns.filter((c) => c.conclusion === 'failure').length;
+	const failedChecks = checkRuns.filter((c) => c.conclusion === 'failure');
+	const failed = failedChecks.length;
 	const actionRequired = checkRuns.filter((c) => c.conclusion === 'action_required').length;
 
 	const firstStart = new Date(Math.min(...startTimes.map((date) => date.getTime())));
-	const completed = checkRuns.every((check) => !!check.completed_at);
+	const completed = failed !== 0 || checkRuns.every((check) => !!check.completed_at);
 
-	const success = queued === 0 && failed === 0 && actionRequired === 0;
+	const success = failed === 0 && completed && actionRequired === 0;
 
 	return {
 		startedAt: firstStart.toISOString(),
 		success,
-		completed
+		completed,
+		failedChecks: failedChecks.map((check) => check.name)
 	};
 }
 
 function injectEndpoints(api: GitHubApi) {
 	return api.injectEndpoints({
 		endpoints: (build) => ({
-			listChecks: build.query<ChecksResult, string>({
-				queryFn: async (ref, api) =>
-					await ghQuery({
-						domain: 'checks',
-						action: 'listForRef',
-						extra: api.extra,
-						parameters: {
-							ref
+			listChecks: build.query<ChecksResult, { ref: string }>({
+				queryFn: async ({ ref }, api) => {
+					async function listChecksForRef() {
+						return await ghQuery({
+							domain: 'checks',
+							action: 'listForRef',
+							extra: api.extra,
+							parameters: {
+								ref
+							}
+						});
+					}
+
+					return eventualConsistencyCheck(listChecksForRef, (response) => {
+						if (response.error) {
+							return true; // Stop if there's an error
 						}
-					}),
-				providesTags: [ReduxTag.PullRequests]
-			}),
-			listSuites: build.query<SuitesResult, string>({
-				queryFn: async (ref, api) =>
-					await ghQuery({
-						domain: 'checks',
-						action: 'listSuitesForRef',
-						extra: api.extra,
-						parameters: {
-							ref
-						}
-					}),
-				providesTags: [ReduxTag.PullRequests]
+						return hasChecks(response.data);
+					});
+				},
+				providesTags: (_result, _error, args) => [...providesItem(ReduxTag.Checks, args.ref)]
 			})
 		})
 	});

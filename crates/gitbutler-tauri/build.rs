@@ -16,15 +16,21 @@ fn main() {
     if !build_dir.exists() {
         // NOTE(qix-): Do not use `create_dir_all` here - the parent directory
         // NOTE(qix-): already exists, and we want to fail if not (for some reason).
-        #[allow(clippy::expect_fun_call, clippy::create_dir)]
+        #[expect(clippy::expect_fun_call, clippy::create_dir)]
         std::fs::create_dir(&build_dir).expect(
-            format!(
-                "failed to create apps/desktop/build directory: {:?}",
-                build_dir
-            )
-            .as_str(),
+            format!("failed to create apps/desktop/build directory: {build_dir:?}").as_str(),
         );
     }
+    let identifier = if let Ok(channel) = std::env::var("CHANNEL") {
+        match channel.as_str() {
+            "nightly" => "com.gitbutler.app.nightly",
+            "release" => "com.gitbutler.app",
+            _ => "com.gitbutler.app.dev",
+        }
+    } else {
+        "com.gitbutler.app.dev"
+    };
+    println!("cargo:rustc-env=IDENTIFIER={identifier}");
 
     tauri_build::build();
 }

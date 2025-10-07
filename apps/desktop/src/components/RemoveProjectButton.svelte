@@ -1,18 +1,19 @@
 <script lang="ts">
-	import Button from '@gitbutler/ui/Button.svelte';
-	import Modal from '@gitbutler/ui/Modal.svelte';
+	import { Button, Modal, TestId } from '@gitbutler/ui';
 
 	interface Props {
 		projectTitle?: string;
 		isDeleting?: boolean;
 		noModal?: boolean;
+		outlineStyle?: boolean;
 		onDeleteClicked: () => Promise<void>;
 	}
 
 	const {
 		projectTitle = '#',
-		isDeleting = false,
-		noModal = false,
+		isDeleting,
+		noModal,
+		outlineStyle,
 		onDeleteClicked
 	}: Props = $props();
 
@@ -34,7 +35,14 @@
 	let modal = $state<Modal>();
 </script>
 
-<Button style="error" icon="bin-small" reversedDirection onclick={handleClick}>
+<Button
+	testId={TestId.ProjectDeleteButton}
+	style="error"
+	kind={outlineStyle ? 'outline' : 'solid'}
+	icon="bin-small"
+	reversedDirection
+	onclick={handleClick}
+>
 	Remove project…
 </Button>
 
@@ -59,6 +67,7 @@
 
 	{#snippet controls()}
 		<Button
+			testId={TestId.ProjectDeleteModalConfirm}
 			style="error"
 			kind="outline"
 			reversedDirection

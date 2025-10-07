@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Login from '$components/Login.svelte';
-	import Icon from '@gitbutler/ui/Icon.svelte';
-	import SectionCard from '@gitbutler/ui/SectionCard.svelte';
+	import { Icon, SectionCard } from '@gitbutler/ui';
 
 	interface Props {
 		title?: string;
@@ -10,7 +9,7 @@
 
 	const {
 		title: titleLabel = 'Authorization Required',
-		message = 'You need to authorize GitButler to access this service.'
+		message = 'Authorize GitButler to use this service'
 	}: Props = $props();
 </script>
 
